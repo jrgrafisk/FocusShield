@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace FocusShield
 {
@@ -64,6 +65,8 @@ namespace FocusShield
                 { Checked = true };
             var menuWhitelist = new ToolStripMenuItem("Whitelist...", null, OnEditWhitelist);
             var menuBlacklist = new ToolStripMenuItem("Blacklist...", null, OnEditBlacklist);
+            var menuBootload = new ToolStripMenuItem("Load on Boot", null, OnToggleBootload)
+                { Checked = IsBootloadEnabled() };
             var menuExit = new ToolStripMenuItem("Exit", null, OnExit);
 
             _menu = new ContextMenuStrip();
@@ -72,6 +75,7 @@ namespace FocusShield
             _menu.Items.Add(menuWhitelist);
             _menu.Items.Add(menuBlacklist);
             _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(menuBootload);
             _menu.Items.Add(menuExit);
 
             // ── tray icon ──
@@ -365,9 +369,60 @@ namespace FocusShield
             return form.ShowDialog() == DialogResult.OK ? textBox.Text : null;
         }
 
+        private void OnToggleBootload(object sender, EventArgs e)
+        {
+            if (IsBootloadEnabled())
+                DisableBootload();
+            else
+                EnableBootload();
+
+            // Update the menu item
+            ((ToolStripMenuItem)sender).Checked = IsBootloadEnabled();
+        }
+
         private void OnExit(object sender, EventArgs e) => Application.Exit();
 
         // ─── helpers ─────────────────────────────────────────────────────────────
+        private static bool IsBootloadEnabled()
+        {
+            try
+            {
+                var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run", false);
+                return key?.GetValue("FocusShield") != null;
+            }
+            catch { return false; }
+        }
+
+        private static void EnableBootload()
+        {
+            try
+            {
+                var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run", true);
+                key?.SetValue("FocusShield", System.Reflection.Assembly.GetExecutingAssembly().Location);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to enable boot startup: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private static void DisableBootload()
+        {
+            try
+            {
+                var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Run", true);
+                key?.DeleteValue("FocusShield", false);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to disable boot startup: {ex.Message}", "Error",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
         private static void ApplyLockTimeout(uint ms)
         {
             NativeMethods.SystemParametersInfo(

@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build:
+    name: Build & Verify
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore FocusShield.sln
+
+      - name: Build (Debug)
+        run: dotnet build FocusShield.sln --no-restore --configuration Debug
+
+      - name: Build (Release)
+        run: dotnet build FocusShield.sln --no-restore --configuration Release
+
+      - name: Upload Release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FocusShield-Release
+          path: FocusShield/bin/Release/net8.0-windows/
+          if-no-files-found: error

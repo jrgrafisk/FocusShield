@@ -87,6 +87,34 @@ namespace FocusShield
         [DllImport("user32.dll")]
         public static extern bool DestroyIcon(IntPtr hIcon);
 
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        public const int SW_SHOWNOACTIVATE    = 4;
+        public const int SW_MINIMIZE          = 6;
+        public const int SW_SHOWMINNOACTIVE   = 7;
+
+        // ── last user input ───────────────────────────────────────────
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LASTINPUTINFO
+        {
+            public uint cbSize;
+            public uint dwTime;
+        }
+
+        [DllImport("user32.dll")]
+        public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        /// <summary>
+        /// Returns milliseconds since the user last pressed a key or moved the mouse.
+        /// </summary>
+        public static uint GetIdleTime()
+        {
+            var lii = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)) };
+            GetLastInputInfo(ref lii);
+            return (uint)Environment.TickCount - lii.dwTime;
+        }
+
         // ── helpers ─────────────────────────────────────────────────────
 
         /// <summary>

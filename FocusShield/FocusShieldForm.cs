@@ -30,6 +30,10 @@ namespace FocusShield
         private bool   _enabled = true;
         private uint   _originalTimeout;
 
+        // If the user hasn't touched the keyboard/mouse in this many ms,
+        // any window activation is treated as a focus steal.
+        private const uint IdleThresholdMs = 300;
+
         private Icon _iconActive;
         private Icon _iconBlocked;
         private Icon _iconPaused;
@@ -116,26 +120,46 @@ namespace FocusShield
         // ─── shell hook message pump ─────────────────────────────────────────────
         protected override void WndProc(ref Message m)
         {
-            if (_shellMsg != 0 && m.Msg == (int)_shellMsg)
+            if (_shellMsg != 0 && m.Msg == (int)_shellMsg && _enabled)
             {
                 int code = m.WParam.ToInt32();
 
-                if (code == NativeMethods.HSHELL_WINDOWACTIVATED && _enabled)
+                if (code == NativeMethods.HSHELL_RUDEAPPACTIVATED)
                 {
-                    // Normal (user-initiated) activation: remember this window
-                    if (m.LParam != IntPtr.Zero)
-                        _lastUserForeground = m.LParam;
+                    // Always block forced activations
+                    OnFocusSteal(m.LParam);
                 }
-                else if (code == NativeMethods.HSHELL_RUDEAPPACTIVATED && _enabled)
+                else if (code == NativeMethods.HSHELL_WINDOWACTIVATED)
                 {
-                    OnRudeActivation(m.LParam);
+                    if (m.LParam == IntPtr.Zero) goto done;
+
+                    // If user was idle, this is likely an app stealing focus
+                    uint idle = NativeMethods.GetIdleTime();
+                    if (idle > IdleThresholdMs && IsDifferentProcess(m.LParam))
+                    {
+                        OnFocusSteal(m.LParam);
+                    }
+                    else
+                    {
+                        // Genuine user-initiated activation: remember it
+                        _lastUserForeground = m.LParam;
+                    }
                 }
             }
 
+            done:
             base.WndProc(ref m);
         }
 
-        private void OnRudeActivation(IntPtr rudeHwnd)
+        private bool IsDifferentProcess(IntPtr hwnd)
+        {
+            if (_lastUserForeground == IntPtr.Zero) return false;
+            NativeMethods.GetWindowThreadProcessId(hwnd, out uint newPid);
+            NativeMethods.GetWindowThreadProcessId(_lastUserForeground, out uint oldPid);
+            return newPid != oldPid;
+        }
+
+        private void OnFocusSteal(IntPtr rudeHwnd)
         {
             if (rudeHwnd == IntPtr.Zero) return;
 
@@ -150,16 +174,16 @@ namespace FocusShield
             if (_lastUserForeground != IntPtr.Zero && _lastUserForeground != rudeHwnd)
                 NativeMethods.ForceForeground(_lastUserForeground);
 
-            // 3. Update tray to amber + balloon
+            // 3. Update tray to amber + notification
             string title = NativeMethods.GetWindowTitle(rudeHwnd);
-            string label = string.IsNullOrWhiteSpace(title) ? "a background app" : $"\"{title}\"";
+            string appName = string.IsNullOrWhiteSpace(title) ? "An app" : $"{title}";
 
             _trayIcon.Icon = _iconBlocked;
-            _trayIcon.Text = TruncateTip($"Blocked: {label}");
+            _trayIcon.Text = TruncateTip($"Ready: {appName}");
             _trayIcon.ShowBalloonTip(
                 timeout: 3000,
-                tipTitle: "FocusShield blocked a pop-up",
-                tipText:  $"{label} wants your attention \u2014 click its taskbar button when ready.",
+                tipTitle: $"{appName} is ready",
+                tipText:  "Click its taskbar button when you\u2019re ready to switch.",
                 tipIcon:  ToolTipIcon.Info);
 
             _resetTimer.Stop();

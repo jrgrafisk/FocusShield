@@ -1,0 +1,46 @@
+# EditorConfig helps developers define and maintain consistent coding styles for multiple developers working on the same project across various editors and IDEs.
+root = true
+
+# All files
+[*]
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+
+# C# files
+[*.cs]
+indent_size = 4
+
+# XML project files
+[*.{csproj,vbproj,proj,projitems,shproj}]
+indent_size = 2
+
+# JSON files
+[*.json]
+indent_size = 2
+
+# YAML files
+[*.{yml,yaml}]
+indent_size = 2
+
+# C# files - naming conventions
+[*.cs]
+
+# Style rules
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_inlined_variable_declaration = true:suggestion
+
+# Indentation rules
+csharp_indent_braces = false
+csharp_indent_block_contents = true
+csharp_indent_case_contents_when_block = false
+
+# New line preferences
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true

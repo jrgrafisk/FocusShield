@@ -24,6 +24,7 @@ namespace FocusShield
         private readonly NotifyIcon       _trayIcon;
         private readonly ContextMenuStrip _menu;
         private readonly ToolStripMenuItem _menuEnabled;
+        private readonly AppListManager    _appListManager;
 
         private uint   _shellMsg;              // registered WM_SHELLHOOKMESSAGE id
         private IntPtr _lastUserForeground;    // hwnd the user was actually using
@@ -54,13 +55,20 @@ namespace FocusShield
             _iconBlocked = IconRenderer.CreateBlockedIcon();
             _iconPaused  = IconRenderer.CreatePausedIcon();
 
+            _appListManager = new AppListManager();
+
             // ── context menu ──
             _menuEnabled = new ToolStripMenuItem("Protection Enabled", null, OnToggleEnabled)
                 { Checked = true };
+            var menuWhitelist = new ToolStripMenuItem("Whitelist...", null, OnEditWhitelist);
+            var menuBlacklist = new ToolStripMenuItem("Blacklist...", null, OnEditBlacklist);
             var menuExit = new ToolStripMenuItem("Exit", null, OnExit);
 
             _menu = new ContextMenuStrip();
             _menu.Items.Add(_menuEnabled);
+            _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(menuWhitelist);
+            _menu.Items.Add(menuBlacklist);
             _menu.Items.Add(new ToolStripSeparator());
             _menu.Items.Add(menuExit);
 
@@ -167,6 +175,17 @@ namespace FocusShield
             NativeMethods.GetWindowThreadProcessId(rudeHwnd, out uint pid);
             if (pid == NativeMethods.GetCurrentProcessId()) return;
 
+            // Check whitelist: if app is whitelisted, allow it to take focus
+            if (_appListManager.IsWhitelisted(pid))
+            {
+                _lastUserForeground = rudeHwnd;
+                return;
+            }
+
+            // Blacklist always blocks, even if user initiated
+            // (useful for known problematic apps)
+            bool isBlacklisted = _appListManager.IsBlacklisted(pid);
+
             // 1. Flash the rude window's taskbar button (amber, until user clicks it)
             NativeMethods.FlashTaskbar(rudeHwnd);
 
@@ -180,10 +199,15 @@ namespace FocusShield
 
             _trayIcon.Icon = _iconBlocked;
             _trayIcon.Text = TruncateTip($"Ready: {appName}");
+
+            string tipText = isBlacklisted
+                ? $"{appName} is blacklisted and blocked."
+                : "Click its taskbar button when you\u2019re ready to switch.";
+
             _trayIcon.ShowBalloonTip(
                 timeout: 3000,
                 tipTitle: $"{appName} is ready",
-                tipText:  "Click its taskbar button when you\u2019re ready to switch.",
+                tipText:  tipText,
                 tipIcon:  ToolTipIcon.Info);
 
             _resetTimer.Stop();
@@ -198,6 +222,145 @@ namespace FocusShield
 
             ApplyLockTimeout(_enabled ? 30_000u : _originalTimeout);
             RefreshTrayIcon();
+        }
+
+        private void OnEditWhitelist(object sender, EventArgs e)
+        {
+            ShowListEditor("Whitelist", _appListManager.GetWhitelist(),
+                _appListManager.AddToWhitelist, _appListManager.RemoveFromWhitelist);
+        }
+
+        private void OnEditBlacklist(object sender, EventArgs e)
+        {
+            ShowListEditor("Blacklist", _appListManager.GetBlacklist(),
+                _appListManager.AddToBlacklist, _appListManager.RemoveFromBlacklist);
+        }
+
+        private void ShowListEditor(string listName, IEnumerable<string> items,
+            Action<string> onAdd, Action<string> onRemove)
+        {
+            var form = new Form
+            {
+                Text = $"FocusShield - {listName}",
+                Width = 400,
+                Height = 300,
+                StartPosition = FormStartPosition.CenterScreen,
+                ShowIcon = false
+            };
+
+            var listBox = new ListBox
+            {
+                Dock = DockStyle.Fill,
+                DataSource = new List<string>(items)
+            };
+            form.Controls.Add(listBox);
+
+            var panel = new Panel { Dock = DockStyle.Bottom, Height = 40 };
+            var btnAdd = new Button
+            {
+                Text = "Add",
+                Width = 80,
+                Left = 10,
+                Top = 5,
+                DialogResult = DialogResult.OK
+            };
+            btnAdd.Click += (_, _) =>
+            {
+                string app = PromptForAppName();
+                if (!string.IsNullOrWhiteSpace(app))
+                {
+                    onAdd(app);
+                    listBox.DataSource = new List<string>(items);
+                }
+            };
+
+            var btnRemove = new Button
+            {
+                Text = "Remove",
+                Width = 80,
+                Left = 100,
+                Top = 5,
+                DialogResult = DialogResult.Cancel
+            };
+            btnRemove.Click += (_, _) =>
+            {
+                if (listBox.SelectedItem is string selected)
+                {
+                    onRemove(selected);
+                    listBox.DataSource = new List<string>(items);
+                }
+            };
+
+            var btnClose = new Button
+            {
+                Text = "Close",
+                Width = 80,
+                Left = 190,
+                Top = 5,
+                DialogResult = DialogResult.Cancel
+            };
+            btnClose.Click += (_, _) => form.Close();
+
+            panel.Controls.Add(btnAdd);
+            panel.Controls.Add(btnRemove);
+            panel.Controls.Add(btnClose);
+            form.Controls.Add(panel);
+
+            form.ShowDialog();
+        }
+
+        private string PromptForAppName()
+        {
+            var form = new Form
+            {
+                Text = "Add Application",
+                Width = 300,
+                Height = 150,
+                StartPosition = FormStartPosition.CenterParent,
+                ShowIcon = false
+            };
+
+            var label = new Label
+            {
+                Text = "Application name (without .exe):",
+                Left = 10,
+                Top = 10,
+                Width = 260
+            };
+
+            var textBox = new TextBox
+            {
+                Left = 10,
+                Top = 40,
+                Width = 260
+            };
+
+            var btnOK = new Button
+            {
+                Text = "OK",
+                Left = 110,
+                Top = 70,
+                Width = 80,
+                DialogResult = DialogResult.OK
+            };
+
+            var btnCancel = new Button
+            {
+                Text = "Cancel",
+                Left = 200,
+                Top = 70,
+                Width = 80,
+                DialogResult = DialogResult.Cancel
+            };
+
+            form.Controls.Add(label);
+            form.Controls.Add(textBox);
+            form.Controls.Add(btnOK);
+            form.Controls.Add(btnCancel);
+            form.AcceptButton = btnOK;
+            form.CancelButton = btnCancel;
+
+            return form.ShowDialog() == DialogResult.OK ? textBox.Text : null;
         }
 
         private void OnExit(object sender, EventArgs e) => Application.Exit();

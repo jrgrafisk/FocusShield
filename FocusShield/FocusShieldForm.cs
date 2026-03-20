@@ -34,7 +34,8 @@ namespace FocusShield
 
         // If the user hasn't touched the keyboard/mouse in this many ms,
         // any window activation is treated as a focus steal.
-        private const uint IdleThresholdMs = 300;
+        // Lowered to catch persistent apps like Steam that spam focus attempts.
+        private const uint IdleThresholdMs = 150;
 
         private Icon _iconActive;
         private Icon _iconBlocked;

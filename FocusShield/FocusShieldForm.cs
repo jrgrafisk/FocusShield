@@ -174,16 +174,16 @@ namespace FocusShield
             if (_lastUserForeground != IntPtr.Zero && _lastUserForeground != rudeHwnd)
                 NativeMethods.ForceForeground(_lastUserForeground);
 
-            // 3. Update tray to amber + balloon
+            // 3. Update tray to amber + notification
             string title = NativeMethods.GetWindowTitle(rudeHwnd);
-            string label = string.IsNullOrWhiteSpace(title) ? "a background app" : $"\"{title}\"";
+            string appName = string.IsNullOrWhiteSpace(title) ? "An app" : $"{title}";
 
             _trayIcon.Icon = _iconBlocked;
-            _trayIcon.Text = TruncateTip($"Blocked: {label}");
+            _trayIcon.Text = TruncateTip($"Ready: {appName}");
             _trayIcon.ShowBalloonTip(
                 timeout: 3000,
-                tipTitle: "FocusShield blocked a pop-up",
-                tipText:  $"{label} wants your attention \u2014 click its taskbar button when ready.",
+                tipTitle: $"{appName} is ready",
+                tipText:  "Click its taskbar button when you\u2019re ready to switch.",
                 tipIcon:  ToolTipIcon.Info);
 
             _resetTimer.Stop();

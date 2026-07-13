@@ -1,0 +1,12 @@
+=== QUALITETSKONTROL / QC-RAPPORT ===
+Antal ord (final):        17773
+Korteste ord:             abekat (6 tegn)
+Længste ord:              abortmodstander (15 tegn)
+Antal dubletter fjernet:  0
+
+--- Fjernet i QC ---
+For korte (<3):          0
+For lange (>60):         0
+Indeholdt mellemrum:      0
+Ugyldige tegn:            0
+

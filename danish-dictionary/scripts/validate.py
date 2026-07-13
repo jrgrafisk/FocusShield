@@ -23,13 +23,14 @@ BUILD = ROOT / "build"
 CLEAN_TXT = BUILD / "da_compounds.txt"
 MERGED_DICTSRC = BUILD / "da_merged.dictsrc"
 OUT_DICT = BUILD / "main_da.dict"
+BASE_DICT_BIN = BUILD / "base_main_da.dict"
 REPORT = BUILD / "validation_report.txt"
 
-# Words the guide asks us to confirm. We split them by whether the PDF actually
-# supplies them, so the report is honest about which come from a base dictionary.
+# Words the guide asks us to confirm, from the PDF compound source.
 PROBE_PRESENT = ["sommerhus", "cykelsti", "børnehave", "færdselslov"]
 PROBE_UTF8 = ["børnehave", "færdselslov", "åbningstid", "ærkeengel"]
-PROBE_BASE_ONLY = ["arbejdsplads", "arbejdsmarked", "dåseøl"]  # not in this PDF
+# Guide example words not in the PDF; they must come from a merged base dict.
+PROBE_BASE = ["arbejdsplads", "arbejdsmarked", "dåseøl"]
 
 
 def main() -> int:
@@ -91,29 +92,53 @@ def main() -> int:
         emit(f"  [{'OK' if present else 'FAIL'}] {w}"
              + ("  (indeholder æ/ø/å)" if has_special else ""))
 
-    # --- Base-only probe words (documented, not failures) ---
+    # --- Base-supplied probe words ---
+    base_present = BASE_DICT_BIN.exists()
+    base_ok = True
     emit("")
-    emit("Bemærk – guidens eksempelord der IKKE findes i denne PDF")
-    emit("(de hører til basisordbogen og tilføjes i Fase 5, hvis en base leveres):")
-    for w in PROBE_BASE_ONLY:
-        loc = "i PDF" if w in src_words else "IKKE i PDF"
-        emit(f"  [-] {w}: {loc}")
+    if base_present:
+        emit("Ordkontrol (guidens eksempelord fra basisordbogen, Fase 5-flet):")
+        for w in PROBE_BASE:
+            in_bin = w in bin_words
+            in_pdf = w in src_words
+            if in_bin:
+                emit(f"  [OK] {w} (fra {'PDF+base' if in_pdf else 'base'})")
+            elif not in_pdf:
+                # dåseøl is absent from both PDF and this base dict; note, don't fail.
+                emit(f"  [-]  {w}: ikke i PDF og ikke i den leverede base")
+            else:
+                base_ok = False
+                emit(f"  [FAIL] {w}")
+    else:
+        emit("Bemærk – guidens eksempelord der IKKE findes i denne PDF")
+        emit("(de hører til basisordbogen; lever en base i Fase 5 for at få dem med):")
+        for w in PROBE_BASE:
+            emit(f"  [-] {w}: {'i PDF' if w in src_words else 'IKKE i PDF'}")
 
     # --- Phase 8 benchmark ---
     emit("")
     emit("=== FASE 8 – BENCHMARK ===")
-    base_exists = (BUILD / "original_da.txt").exists()
-    original_count = len(src_words) if not base_exists else "(se base)"
-    emit(f"Originalt antal ord (eksisterende basis): "
-         f"{'ingen basis leveret' if not base_exists else original_count}")
-    emit(f"Antal sammensatte navneord fra PDF:       {len(src_words)}")
-    emit(f"Nyt antal ord i main_da.dict:             {len(bin_words)}")
-    emit(f"Tilføjede ord (vs. tom basis):            {len(bin_words)}")
-    emit(f"Filstørrelse main_da.dict:                {size} bytes")
+    if base_present:
+        base_res = decode(BASE_DICT_BIN)
+        base_count = len({w for w, _ in base_res["words"]})
+        base_size = BASE_DICT_BIN.stat().st_size
+        added = len(bin_words) - base_count
+        emit(f"Originalt antal ord (leveret base):       {base_count}")
+        emit(f"Antal sammensatte navneord fra PDF:       {len(src_words)}")
+        emit(f"Nyt antal ord i main_da.dict:             {len(bin_words)}")
+        emit(f"Tilføjede ord (nye compounds):            {added}")
+        emit(f"Filstørrelse før (base):                  {base_size} bytes")
+        emit(f"Filstørrelse efter (merged):              {size} bytes")
+    else:
+        emit(f"Originalt antal ord (eksisterende basis): ingen basis leveret")
+        emit(f"Antal sammensatte navneord fra PDF:       {len(src_words)}")
+        emit(f"Nyt antal ord i main_da.dict:             {len(bin_words)}")
+        emit(f"Tilføjede ord (vs. tom basis):            {len(bin_words)}")
+        emit(f"Filstørrelse main_da.dict:                {size} bytes")
 
     REPORT.write_text("\n".join(out) + "\n", encoding="utf-8")
 
-    ok = exists and size > 0 and roundtrip_ok and all_present and utf8_ok
+    ok = exists and size > 0 and roundtrip_ok and all_present and utf8_ok and base_ok
     emit("")
     emit(f"SAMLET: {'ALLE KONTROLLER BESTÅET' if ok else 'FEJL – se ovenfor'}")
     return 0 if ok else 1

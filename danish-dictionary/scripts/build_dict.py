@@ -36,8 +36,16 @@ COMBINED = BUILD / "da_wordlist.combined"          # Phase 6 dicttool input
 OUT_DICT = BUILD / "main_da.dict"                  # Phase 6 output
 JAR = TOOLS / "dicttool_aosp.jar"
 
-# Optional base dictionary (Phase 5). Present only if the user supplies it.
+# Optional base dictionary (Phase 5). Present only if the user supplies one.
+# A binary HeliBoard/AOSP .dict (base_main_da.dict) is preferred; plain text /
+# dictsrc bases (original_da.txt) are also accepted.
+BASE_DICT_BIN = BUILD / "base_main_da.dict"
 BASE_CANDIDATES = [BUILD / "original_da.txt", ROOT / "original_da.txt"]
+
+# Merge policy: real base frequencies always win for existing words; only
+# genuinely-new compounds are added at the placeholder frequency (f=128). This
+# keeps the placeholder from overwriting real corpus data.
+KEEP_BASE_FREQUENCY = True
 
 FREQUENCY = 128
 # Fixed build date -> reproducible, byte-stable dictionary header.
@@ -76,32 +84,45 @@ def load_dictsrc(path: Path) -> dict[str, int]:
     return out
 
 
+def load_base() -> tuple[dict[str, int], str] | tuple[None, None]:
+    """Load an optional base dictionary: binary .dict preferred, else text."""
+    if BASE_DICT_BIN.exists():
+        # Decode the binary HeliBoard/AOSP dictionary to {word: freq}.
+        sys.setrecursionlimit(100000)
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from read_dict import decode  # local import; only needed with a base
+        res = decode(BASE_DICT_BIN)
+        return {w: f for w, f in res["words"]}, BASE_DICT_BIN.name
+    text_path = next((p for p in BASE_CANDIDATES if p.exists()), None)
+    if text_path is not None:
+        return load_dictsrc(text_path), text_path.name
+    return None, None
+
+
 def phase5_merge() -> dict[str, int]:
     log.info("PHASE 5: merge with existing dictionary (if present)")
     compounds = load_dictsrc(DICTSRC)
     log.info("  compounds loaded: %d", len(compounds))
 
-    base_path = next((p for p in BASE_CANDIDATES if p.exists()), None)
-    if base_path is None:
-        log.info("  no base dictionary found (%s) -> compounds stand alone",
-                 " / ".join(str(p.name) for p in BASE_CANDIDATES))
+    base, base_name = load_base()
+    if base is None:
+        log.info("  no base dictionary found -> compounds stand alone")
         merged = dict(compounds)
     else:
-        base = load_dictsrc(base_path)
-        log.info("  base dictionary %s loaded: %d words", base_path.name, len(base))
-        merged = dict(base)  # start from base; base freq wins on ties
-        added = 0
-        raised = 0
+        log.info("  base dictionary %s loaded: %d words", base_name, len(base))
+        merged = dict(base)  # start from base
+        added = raised = 0
         for w, f in compounds.items():
             if w not in merged:
                 merged[w] = f
                 added += 1
-            elif f > merged[w]:
-                # keep highest frequency; existing wins on equality
+            elif not KEEP_BASE_FREQUENCY and f > merged[w]:
                 merged[w] = f
                 raised += 1
-        log.info("  merge: %d new words added, %d freqs raised, base freq kept on ties",
-                 added, raised)
+        overlap = len(compounds) - added
+        log.info("  merge: %d new compounds added at f=128, %d already in base "
+                 "(base frequency kept), %d freqs raised",
+                 added, overlap, raised)
 
     # Deterministic order.
     merged = dict(sorted(merged.items()))
@@ -116,8 +137,9 @@ def phase6_compile(entries: dict[str, int]) -> None:
     if not JAR.exists():
         raise FileNotFoundError(f"dicttool jar missing: {JAR}")
 
-    desc = (f"Danish compound nouns (RO 2012) + base; {len(entries)} words"
-            if any(p.exists() for p in BASE_CANDIDATES)
+    has_base = BASE_DICT_BIN.exists() or any(p.exists() for p in BASE_CANDIDATES)
+    desc = (f"Dansk: base + RO 2012 compound nouns; {len(entries)} words"
+            if has_base
             else f"Danish compound nouns from RO 2012 wordlist; {len(entries)} words")
     header = (f"dictionary=main:{LOCALE},locale={LOCALE},"
               f"description={desc},date={BUILD_DATE},version={VERSION}")

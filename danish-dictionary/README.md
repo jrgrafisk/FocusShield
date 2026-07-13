@@ -37,34 +37,43 @@ dictionary format. It walks the compiled trie and pulls every word back out so
 Phase 7 can prove the binary actually contains the words we put in (not just
 that the file exists).
 
-## Results for the supplied PDF
+## Results (compounds merged with the supplied HeliBoard base dictionary)
 
-- **17 773** unique Danish compound nouns extracted (76 pages).
-- All match `^[a-zæøå-]+$`, lengths 6–15 characters, **0 duplicates**.
-- Compiled `main_da.dict`: **173 096 bytes**, AOSP format version 2, 25 118 trie
-  nodes.
-- **Round-trip check passes**: decoding the binary yields exactly the 17 773
-  source words, æ/ø/å preserved.
+- **17 773** unique Danish compound nouns extracted from the PDF (76 pages), all
+  matching `^[a-zæøå-]+$`, lengths 6–15 chars, **0 duplicates**.
+- Merged with the supplied HeliBoard base `main_da.dict` (**178 449** words):
+  - **8 752** compounds already existed in the base → base frequency kept.
+  - **9 021** genuinely-new compounds added at the `f=128` placeholder.
+  - **187 470** words in the merged dictionary.
+- Compiled `main_da.dict`: **1 375 831 bytes**, AOSP format version 2.
+- **Round-trip check passes**: decoding the binary yields exactly the 187 470
+  merged words, æ/ø/å preserved; base frequencies verified intact
+  (`arbejdsplads`=110, `og`=214, …).
 - Rebuild is **byte-identical** (fixed header date → deterministic output).
 
-## Phase 5 — merging with the existing HeliBoard Danish dictionary
+The compound-only dictionary (no base) is still produced by running
+`build_dict.py` with no `base_main_da.dict` present.
 
-Phase 5 is conditional in the spec ("*Hvis source-format findes*"). No base
-`main_da.dict` / `original_da.txt` was available in this environment
-(HeliBoard's prebuilt dictionaries live on `codeberg.org`, which was not
-reachable), so the compound list stands alone here.
+## Phase 5 — merging with a base dictionary
 
-The merge logic is implemented and ready: drop a base word list at
-`build/original_da.txt` (either plain `word` / `word,f=N` lines or dicttool
-`word=..,f=..` lines) and re-run — `build_dict.py` will merge, drop duplicates,
-and keep the **highest** frequency (existing frequency wins on ties), then
-recompile.
+Phase 5 is conditional in the spec ("*Hvis source-format findes*"). To merge,
+drop a base dictionary in `build/` and re-run `build_dict.py`:
 
-> Note: a few example words in the spec (`arbejdsplads`, `arbejdsmarked`,
-> `dåseøl`) are **not** in this particular PDF — they are ordinary base
-> vocabulary that would come from that existing dictionary via Phase 5, not from
-> the compound-noun source. The validation report calls this out explicitly
-> instead of inventing them.
+- **Binary HeliBoard/AOSP `.dict`** → `build/base_main_da.dict` (preferred; it is
+  decoded with `read_dict.py`, skipping bigrams/shortcuts), or
+- **Text / dictsrc** → `build/original_da.txt` (`word`, `word,f=N`, or
+  `word=..,f=..` lines).
+
+**Merge policy** (chosen for this build): the base is authoritative — every word
+already in the base keeps its real corpus frequency, and only genuinely-new
+compounds are added at the `f=128` placeholder, so a placeholder never
+overwrites real data. Duplicates are dropped deterministically. (Set
+`KEEP_BASE_FREQUENCY = False` in `build_dict.py` for strict "highest frequency
+wins" instead.)
+
+> Note: `dåseøl` — one of the spec's example words — is in neither the PDF nor
+> the supplied base dict, so it is not in the result. The validation report notes
+> this rather than inventing the word.
 
 ## Installing into HeliBoard
 

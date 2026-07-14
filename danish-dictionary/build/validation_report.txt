@@ -1,0 +1,31 @@
+=== FASE 7 – VALIDERING ===
+[OK] Fil eksisterer: main_da.dict
+[OK] Filstørrelse > 0: 1375831 bytes
+[OK] Binært format-version: 202 (AOSP Ver2)
+[INFO] Ord dekodet fra binær: 187470
+[OK] Round-trip kilde<->binær: 187470 kilde, 187470 binær, 0 mangler, 0 ekstra
+
+Ordkontrol (ord der stammer fra PDF-kilden):
+  [OK] sommerhus
+  [OK] cykelsti
+  [OK] børnehave
+  [OK] færdselslov
+
+UTF-8 kontrol (æ/ø/å bevaret gennem binær round-trip):
+  [OK] børnehave  (indeholder æ/ø/å)
+  [OK] færdselslov  (indeholder æ/ø/å)
+  [OK] åbningstid  (indeholder æ/ø/å)
+  [OK] ærkeengel  (indeholder æ/ø/å)
+
+Ordkontrol (guidens eksempelord fra basisordbogen, Fase 5-flet):
+  [OK] arbejdsplads (fra base)
+  [OK] arbejdsmarked (fra base)
+  [-]  dåseøl: ikke i PDF og ikke i den leverede base
+
+=== FASE 8 – BENCHMARK ===
+Originalt antal ord (leveret base):       178449
+Antal sammensatte navneord fra PDF:       17773
+Nyt antal ord i main_da.dict:             187470
+Tilføjede ord (nye compounds):            9021
+Filstørrelse før (base):                  1304047 bytes
+Filstørrelse efter (merged):              1375831 bytes

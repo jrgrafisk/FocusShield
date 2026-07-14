@@ -1,0 +1,6 @@
+# Run logs contain timestamps (non-reproducible); regenerate via scripts/run_all.sh
+logs/*.log
+
+# Python cache
+__pycache__/
+*.pyc

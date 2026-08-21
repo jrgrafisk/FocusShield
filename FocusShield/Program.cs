@@ -30,10 +30,26 @@ namespace FocusShield
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
+            // A stray exception must not leave the tray icon behind or the system's
+            // foreground lock timeout stuck at FocusShield's value.
+            Application.ThreadException += (_, args) => Fail(args.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (_, args) => Fail(args.ExceptionObject as Exception);
+
             Application.ApplicationExit += (_, _) =>
                 FocusShieldForm.Instance.TrayIconVisible = false;
 
             Application.Run(FocusShieldForm.Instance);
+
+            GC.KeepAlive(mutex);
+        }
+
+        private static void Fail(Exception ex)
+        {
+            MessageBox.Show(
+                $"FocusShield hit an unexpected error and will close.\n\n{ex?.Message}",
+                "FocusShield", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            Application.Exit();
         }
     }
 }

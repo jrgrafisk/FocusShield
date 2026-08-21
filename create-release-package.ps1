@@ -4,8 +4,8 @@
 $exePath = "FocusShield\bin\Release\net8.0-windows\FocusShield.exe"
 $readmePath = "README.md"
 $licensePath = "LICENSE"
-$packageName = "FocusShield-v1.0.0.zip"
-$tempDir = "FocusShield-v1.0.0"
+$packageName = "FocusShield-v1.1.0.zip"
+$tempDir = "FocusShield-v1.1.0"
 
 # Clean up previous package
 if (Test-Path $tempDir) {

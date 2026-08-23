@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<description xmlns="http://openoffice.org/extensions/description/2006"
+             xmlns:d="http://openoffice.org/extensions/description/2006"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+
+  <identifier value="dk.jrgrafisk.budgetfracsv"/>
+  <version value="1.0.0"/>
+
+  <display-name>
+    <name lang="da">Budget fra CSV</name>
+    <name lang="en">Budget from CSV</name>
+  </display-name>
+
+  <publisher>
+    <name xlink:href="https://github.com/jrgrafisk/FocusShield" lang="da">jrgrafisk</name>
+    <name xlink:href="https://github.com/jrgrafisk/FocusShield" lang="en">jrgrafisk</name>
+  </publisher>
+
+  <extension-description>
+    <src xlink:href="description/desc_da.txt" lang="da"/>
+    <src xlink:href="description/desc_en.txt" lang="en"/>
+  </extension-description>
+
+  <icon>
+    <default xlink:href="icons/budget.png"/>
+    <high-contrast xlink:href="icons/budget_hc.png"/>
+  </icon>
+
+  <dependencies>
+    <OpenOffice.org-minimal-version value="4.1" d:name="LibreOffice 5.0"/>
+  </dependencies>
+
+</description>

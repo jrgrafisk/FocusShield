@@ -1,0 +1,5 @@
+Turns a bank CSV export into a finished monthly budget.
+
+Transactions are parsed and categorised automatically, and a spreadsheet is created with a summary per month (planned, actual and difference per category in DKK) plus a sheet with every transaction. Change a category on the transactions sheet and the summary updates immediately.
+
+Handles most CSV variants: semicolon, comma, tab, UTF-8/UTF-16/ANSI, Danish and English number and date formats, and files with either one amount column or separate debit/credit columns.

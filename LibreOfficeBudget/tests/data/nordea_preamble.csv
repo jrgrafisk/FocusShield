@@ -1,0 +1,8 @@
+"Kontoudtog for konto 1234-5678901234"
+"Periode: 01-05-2025 - 31-05-2025"
+
+"Bogføringsdato";"Beløb";"Afsender";"Modtager";"Navn";"Titel";"Saldo"
+"01.05.2025";"-1.234,56";"1234567890";"";"FØTEX 1234";"Dankort-nota 12345";"25.000,00"
+"04.05.2025";"-79,00";"1234567890";"";"SPOTIFY";"Abonnement";"24.921,00"
+"09.05.2025";"2.500,00";"";"1234567890";"MOBILEPAY OVERFØRSEL";"Ferie";"27.421,00"
+"18.05.2025";"-450,00";"1234567890";"";"MATAS";"Dankort-nota 12399";"26.971,00"

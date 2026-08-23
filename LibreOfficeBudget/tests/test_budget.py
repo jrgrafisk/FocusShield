@@ -1,0 +1,321 @@
+# -*- coding: utf-8 -*-
+"""Tests for the parsing/detection engine (no LibreOffice needed).
+
+    python3 -m unittest discover -s tests -v
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from budget_core import csvsniff
+from budget_core.budget import (BuildOptions, KIND_EXPENSE, KIND_INCOME,
+                                SIGN_POSITIVE_IS_EXPENSE, build_transactions,
+                                summarise)
+from budget_core.columns import detect_mapping
+from budget_core.parsing import (detect_dayfirst, detect_decimal_separator,
+                                 month_key, parse_amount, parse_date)
+from budget_core.rules import DEFAULT_CATEGORY, RuleSet
+
+DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+def sample(name):
+    return os.path.join(DATA, name)
+
+
+def load(name, **kwargs):
+    table = csvsniff.read_table(path=sample(name), **kwargs)
+    mapping = detect_mapping(table)
+    return table, mapping
+
+
+def build(name, **kwargs):
+    table, mapping = load(name)
+    options = BuildOptions(decimal=mapping.decimal, dayfirst=mapping.dayfirst,
+                           **kwargs)
+    return table, mapping, build_transactions(table, mapping, RuleSet.defaults(),
+                                              options)
+
+
+class AmountTests(unittest.TestCase):
+
+    def test_danish_and_english(self):
+        self.assertEqual(parse_amount("1.234,56", ","), 1234.56)
+        self.assertEqual(parse_amount("1,234.56", "."), 1234.56)
+        self.assertEqual(parse_amount("-8.500,00", ","), -8500.0)
+        self.assertEqual(parse_amount("123", ","), 123.0)
+
+    def test_currency_and_spaces(self):
+        self.assertEqual(parse_amount("1 234,56 kr.", ","), 1234.56)
+        self.assertEqual(parse_amount("kr. 1.234,56", ","), 1234.56)
+        self.assertEqual(parse_amount("$1,234.56", "."), 1234.56)
+        self.assertEqual(parse_amount("€ 99,50", ","), 99.5)
+        self.assertEqual(parse_amount("1 234,50", ","), 1234.5)
+
+    def test_negative_notations(self):
+        self.assertEqual(parse_amount("(120,45)", ","), -120.45)
+        self.assertEqual(parse_amount("198,50-", ","), -198.5)
+        self.assertEqual(parse_amount("−450,00", ","), -450.0)
+        self.assertEqual(parse_amount("1.234,56 DR", ","), -1234.56)
+
+    def test_rejects_junk(self):
+        for value in ("", "   ", "abc", "12-05-2025x", None):
+            self.assertIsNone(parse_amount(value))
+
+    def test_separator_detection(self):
+        self.assertEqual(detect_decimal_separator(
+            ["-345,60", "28.500,00", "12,45"]), ",")
+        self.assertEqual(detect_decimal_separator(
+            ["-345.60", "28,500.00", "12.45"]), ".")
+        self.assertEqual(detect_decimal_separator(["1.234", "5.678"]), ",")
+
+    def test_guessing_without_column_context(self):
+        self.assertEqual(parse_amount("1.234,56"), 1234.56)
+        self.assertEqual(parse_amount("1,234.56"), 1234.56)
+        self.assertEqual(parse_amount("1.234"), 1234.0)
+        self.assertEqual(parse_amount("12,50"), 12.5)
+
+
+class DateTests(unittest.TestCase):
+
+    def test_layouts(self):
+        expected = datetime.date(2025, 5, 31)
+        for text in ("31-05-2025", "31/05/2025", "31.05.2025", "2025-05-31",
+                     "20250531", "31052025", "31. maj 2025", "31 May 2025",
+                     "2025-05-31 14:22:01", "31-05-2025 kl. 14:22"):
+            self.assertEqual(parse_date(text), expected, text)
+
+    def test_month_first(self):
+        self.assertEqual(parse_date("05/31/2025", dayfirst=True),
+                         datetime.date(2025, 5, 31))
+        self.assertEqual(parse_date("02/03/2025", dayfirst=False),
+                         datetime.date(2025, 2, 3))
+        self.assertEqual(parse_date("02/03/2025", dayfirst=True),
+                         datetime.date(2025, 3, 2))
+
+    def test_two_digit_year(self):
+        self.assertEqual(parse_date("31-05-25"), datetime.date(2025, 5, 31))
+        self.assertEqual(parse_date("31-05-99"), datetime.date(1999, 5, 31))
+
+    def test_dayfirst_detection(self):
+        self.assertTrue(detect_dayfirst(["31/05/2025", "02/03/2025"]))
+        self.assertFalse(detect_dayfirst(["05/31/2025", "12/25/2025"]))
+
+    def test_rejects_junk(self):
+        for value in ("", "Tekst", "12", "1.234,56", None):
+            self.assertIsNone(parse_date(value))
+
+    def test_month_key(self):
+        self.assertEqual(month_key(datetime.date(2025, 5, 31)), "2025-05")
+
+
+class SniffTests(unittest.TestCase):
+
+    def test_semicolon_cp1252(self):
+        table, _ = load("danskebank.csv")
+        self.assertEqual(table.delimiter, ";")
+        self.assertEqual(len(table.rows), 10)
+        self.assertEqual(table.header[0], "Dato")
+        self.assertIn("København", table.rows[0][1])
+
+    def test_preamble_is_skipped(self):
+        table, _ = load("nordea_preamble.csv")
+        self.assertEqual(len(table.rows), 4)
+        self.assertEqual(table.header[0], "Bogføringsdato")
+        self.assertTrue(table.preamble)
+
+    def test_comma_delimiter(self):
+        table, _ = load("us_style.csv")
+        self.assertEqual(table.delimiter, ",")
+        self.assertEqual(len(table.rows), 5)
+
+    def test_utf16_tab(self):
+        table, _ = load("utf16_tab.csv")
+        self.assertEqual(table.delimiter, "\t")
+        self.assertTrue(table.encoding.startswith("utf-16"))
+        self.assertEqual(len(table.rows), 4)
+        self.assertIn("Ørsted", table.rows[0][1])
+
+    def test_missing_header(self):
+        table, _ = load("no_header.csv")
+        self.assertIsNone(table.header)
+        self.assertEqual(len(table.rows), 3)
+
+    def test_sep_hint(self):
+        table, _ = load("sep_hint.csv")
+        self.assertEqual(table.delimiter, ";")
+        self.assertEqual(len(table.rows), 3)
+
+    def test_messy_file(self):
+        table, _ = load("messy.csv")
+        self.assertEqual(table.header[0], "Dato")
+        # The ragged row is kept (padded), blank rows are dropped.
+        self.assertTrue(len(table.rows) >= 5)
+
+
+class MappingTests(unittest.TestCase):
+
+    def test_balance_column_is_not_the_amount(self):
+        table, mapping = load("danskebank.csv")
+        self.assertEqual(table.header_name(mapping.date), "Dato")
+        self.assertEqual(table.header_name(mapping.amount), "Beløb")
+        self.assertEqual(table.header_name(mapping.balance), "Saldo")
+        self.assertEqual(mapping.decimal, ",")
+        self.assertTrue(mapping.dayfirst)
+
+    def test_debit_credit_columns(self):
+        table, mapping = load("haevet_indsat.csv")
+        self.assertEqual(table.header_name(mapping.amount_out), "Hævet")
+        self.assertEqual(table.header_name(mapping.amount_in), "Indsat")
+        self.assertIsNone(mapping.amount)
+
+    def test_english_file(self):
+        table, mapping = load("us_style.csv")
+        self.assertEqual(table.header_name(mapping.date), "Date")
+        self.assertEqual(table.header_name(mapping.amount), "Amount")
+        self.assertEqual(mapping.decimal, ".")
+        self.assertFalse(mapping.dayfirst)
+
+    def test_text_column(self):
+        table, mapping = load("danskebank.csv")
+        self.assertEqual([table.header_name(i) for i in mapping.text], ["Tekst"])
+
+    def test_headerless_file(self):
+        table, mapping = load("no_header.csv")
+        self.assertEqual(mapping.date, 0)
+        self.assertEqual(mapping.amount, 2)
+        self.assertEqual(mapping.text, [1])
+
+
+class BuildTests(unittest.TestCase):
+
+    def test_danske_bank(self):
+        _table, _mapping, result = build("danskebank.csv")
+        self.assertEqual(len(result.transactions), 10)
+        first = result.transactions[0]
+        self.assertEqual(first.date, datetime.date(2025, 5, 2))
+        self.assertAlmostEqual(first.amount, -345.60)
+        self.assertEqual(first.category, "Dagligvarer")
+        self.assertEqual(first.kind, KIND_EXPENSE)
+        salary = [t for t in result.transactions if t.category == "Løn"]
+        self.assertEqual(len(salary), 2)
+        self.assertEqual(salary[0].kind, KIND_INCOME)
+
+    def test_debit_credit_signs(self):
+        _table, _mapping, result = build("haevet_indsat.csv")
+        amounts = {t.text: t.amount for t in result.transactions}
+        self.assertAlmostEqual(amounts["Ejerforening maj"], -2100.0)
+        self.assertAlmostEqual(amounts["Løn"], 27400.0)
+
+    def test_english_file(self):
+        _table, _mapping, result = build("us_style.csv")
+        self.assertEqual(len(result.transactions), 5)
+        amazon = result.transactions[0]
+        self.assertEqual(amazon.date, datetime.date(2025, 5, 2))
+        self.assertAlmostEqual(amazon.amount, -120.45)
+        self.assertEqual(amazon.category, "Shopping")
+
+    def test_footer_and_ragged_rows_are_skipped(self):
+        _table, _mapping, result = build("messy.csv")
+        texts = [t.text for t in result.transactions]
+        self.assertIn("MENY SLAGELSE", texts)
+        self.assertNotIn("I alt", texts)
+        self.assertEqual(result.skipped_no_date, 1)   # the "I alt" footer row
+        self.assertEqual(result.skipped_no_amount, 1)  # the row without an amount
+
+    def test_unsigned_amounts_become_expenses(self):
+        """A column without a single minus sign is all spending."""
+        table = csvsniff.Table.from_rows([
+            ["Dato", "Tekst", "Beløb"],
+            ["01-05-2025", "Netto", "198,45"],
+            ["02-05-2025", "Circle K", "520,00"],
+        ])
+        mapping = detect_mapping(table)
+        result = build_transactions(table, mapping, RuleSet.defaults())
+        self.assertTrue(all(t.amount < 0 for t in result.transactions))
+        self.assertTrue(any("fortegn" in w.lower() or "udgifter" in w.lower()
+                            for w in result.warnings))
+
+    def test_sign_rule_can_be_forced(self):
+        table = csvsniff.Table.from_rows([
+            ["Dato", "Tekst", "Beløb"],
+            ["01-05-2025", "Netto", "198,45"],
+            ["02-05-2025", "Løn", "-24.000,00"],
+        ])
+        mapping = detect_mapping(table)
+        options = BuildOptions(sign=SIGN_POSITIVE_IS_EXPENSE)
+        result = build_transactions(table, mapping, RuleSet.defaults(), options)
+        amounts = {t.text: t.amount for t in result.transactions}
+        self.assertAlmostEqual(amounts["Netto"], -198.45)
+        self.assertAlmostEqual(amounts["Løn"], 24000.0)
+
+    def test_uncategorised_are_reported(self):
+        table = csvsniff.Table.from_rows([
+            ["Dato", "Tekst", "Beløb"],
+            ["01-05-2025", "Ukendt firma ApS", "-100,00"],
+            ["02-05-2025", "Ukendt firma ApS", "-50,00"],
+        ])
+        mapping = detect_mapping(table)
+        result = build_transactions(table, mapping, RuleSet.defaults())
+        self.assertEqual(result.uncategorised[0][0], "Ukendt firma ApS")
+        self.assertEqual(result.uncategorised[0][1], 2)
+        self.assertAlmostEqual(result.uncategorised[0][2], -150.0)
+
+
+class SummaryTests(unittest.TestCase):
+
+    def test_monthly_totals(self):
+        _table, _mapping, result = build("danskebank.csv")
+        summary = summarise(result.transactions)
+        self.assertEqual(summary.months, ["2025-05", "2025-06"])
+        self.assertAlmostEqual(summary.value(KIND_INCOME, "Løn", "2025-05"), 28500.0)
+        groceries = summary.value(KIND_EXPENSE, "Dagligvarer", "2025-05")
+        self.assertAlmostEqual(groceries, -345.60)
+        self.assertAlmostEqual(summary.total(KIND_INCOME), 57000.0)
+        self.assertLess(summary.total(KIND_EXPENSE), 0)
+
+    def test_category_ordering(self):
+        _table, _mapping, result = build("danskebank.csv")
+        summary = summarise(result.transactions)
+        totals = [abs(summary.category_total(KIND_EXPENSE, c))
+                  for c in summary.expense_categories]
+        self.assertEqual(totals, sorted(totals, reverse=True))
+
+
+class RuleTests(unittest.TestCase):
+
+    def test_case_and_accents(self):
+        rules = RuleSet.defaults()
+        self.assertEqual(rules.categorise("NETTO 8021 KØBENHAVN"), "Dagligvarer")
+        self.assertEqual(rules.categorise("cafe sværtegade"), "Restaurant")
+        self.assertEqual(rules.categorise("Café Sværtegade"), "Restaurant")
+
+    def test_longest_keyword_wins(self):
+        rules = RuleSet([("k", "Kort"), ("circle k", "Transport")])
+        self.assertEqual(rules.categorise("CIRCLE K AMAGER"), "Transport")
+
+    def test_regex_rule(self):
+        rules = RuleSet([("re:faktura\\s*\\d+", "Regninger")])
+        self.assertEqual(rules.categorise("Faktura 12345"), "Regninger")
+        self.assertEqual(rules.categorise("Faktura uden nummer"), DEFAULT_CATEGORY)
+
+    def test_add_and_roundtrip(self):
+        rules = RuleSet([("netto", "Dagligvarer")])
+        rules.add("Slagter Hansen", "Dagligvarer")
+        self.assertEqual(rules.categorise("SLAGTER HANSEN"), "Dagligvarer")
+        copy = RuleSet.from_rows(rules.to_rows())
+        self.assertEqual(copy.categorise("Slagter Hansen"), "Dagligvarer")
+
+    def test_header_row_is_ignored(self):
+        rules = RuleSet.from_rows([["Nøgleord", "Kategori"], ["netto", "Mad"]])
+        self.assertEqual(len(rules), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

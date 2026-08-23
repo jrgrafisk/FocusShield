@@ -1,0 +1,5 @@
+Laver et færdigt månedsbudget ud fra en CSV-fil fra banken.
+
+Posteringerne læses og kategoriseres automatisk, og der oprettes et regneark med en oversigt pr. måned (budget, faktisk forbrug og forskel pr. kategori i kroner) samt et ark med alle posteringer. Ret en kategori i posteringsarket, og oversigten opdateres med det samme.
+
+Understøtter de fleste CSV-varianter: semikolon, komma, tabulator, UTF-8/UTF-16/ANSI, danske og engelske tal- og datoformater, kolonner med enten ét beløb eller adskilte kolonner for hævet og indsat.

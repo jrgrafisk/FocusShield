@@ -68,3 +68,8 @@ BenchmarkDotNet.Artifacts/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# LibreOffice budget extension
+LibreOfficeBudget/dist/
+LibreOfficeBudget/**/__pycache__/
+LibreOfficeBudget/tests/data/*.ods

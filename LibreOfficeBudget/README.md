@@ -105,6 +105,17 @@ Så snart mindst én konto har et beløb forskelligt fra 0, bruger **Prognose**
 automatisk summen af Konti som startsaldo i stedet for et gæt - "reelle tal",
 som opdaterer sig selv, når du retter en saldo.
 
+Kolonnen **Kontonummer(e)** er valgfri, men løser et almindeligt problem:
+bankudtræk viser ofte en overførsel mellem to af dine egne konti som en
+almindelig indtægt (eller udgift), så budgettet ser ud til at have flere
+indtægter end bare lønnen. Sæt dit eget kontonummer ind her (flere numre
+adskilles med komma, fx hvis samme konto står med og uden reg.nummer i
+teksten) og tryk **Opdatér kategorier og budget** - så bliver enhver
+postering, hvis tekst indeholder et af numrene, automatisk sat til
+"Ignoreret" og tæller ikke længere med i budgettet. Det virker samme vej som
+en almindelig regel: kør Opdatér igen, og det fanger stadig alle matchende
+posteringer, selv nye man har importeret siden.
+
 ## Prognose
 
 Arket **Prognose** fremskriver saldoen 24 måneder frem, med to linjer i

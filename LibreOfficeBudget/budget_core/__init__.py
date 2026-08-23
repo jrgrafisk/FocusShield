@@ -6,4 +6,5 @@ interpreter and as a normal command line script.
 
 __version__ = "1.0.0"
 
-__all__ = ["budget", "columns", "csvsniff", "parsing", "rules", "textutils"]
+__all__ = ["budget", "columns", "csvsniff", "parsing", "rules", "textutils",
+          "transfers"]

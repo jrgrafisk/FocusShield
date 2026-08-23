@@ -26,6 +26,9 @@ from budget_core.plan import (GROUP_FIXED, GROUP_PERIODIC, GROUP_VARIABLE,
 from budget_core.rules import (DEFAULT_CATEGORY, IGNORED_CATEGORY, RuleSet,
                                default_categories)
 from budget_core.textutils import fold
+from budget_core.transfers import (normalize_account_number,
+                                   parse_account_numbers,
+                                   text_mentions_account)
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -583,6 +586,47 @@ class RuleTests(unittest.TestCase):
         rules = RuleSet([("MobilePay Anders", IGNORED_CATEGORY)])
         names = rules.categories()
         self.assertEqual(names.count(IGNORED_CATEGORY), 1)
+
+
+class TransferTests(unittest.TestCase):
+    """Detecting transfers between the user's own accounts."""
+
+    def test_normalize_strips_everything_but_digits(self):
+        self.assertEqual(normalize_account_number("5301-1234567890"),
+                         "53011234567890")
+        self.assertEqual(normalize_account_number("1234 5678901"), "12345678901")
+
+    def test_parse_account_numbers_splits_and_filters_short(self):
+        self.assertEqual(parse_account_numbers("1234567890, 5301-1234567"),
+                         ["1234567890", "53011234567"])
+        self.assertEqual(parse_account_numbers("123"), [])  # too short
+        self.assertEqual(parse_account_numbers(""), [])
+        self.assertEqual(parse_account_numbers(None), [])
+
+    def test_single_token_match(self):
+        self.assertTrue(text_mentions_account(
+            "Overført fra 1234567890", ["1234567890"]))
+
+    def test_token_with_reg_number_prefix_matches(self):
+        """"5301-1234567890" (reg.nr + kontonr in one token) must still hit."""
+        self.assertTrue(text_mentions_account(
+            "Overførsel til konto 5301-1234567890", ["1234567890"]))
+
+    def test_split_reg_and_account_number_matches(self):
+        """"5301 1234567890" split by a space across two tokens."""
+        self.assertTrue(text_mentions_account(
+            "Til konto 5301 1234567890", ["1234567890"]))
+
+    def test_no_match_for_unrelated_text(self):
+        self.assertFalse(text_mentions_account(
+            "Netto Amager 21.05 kl. 17.42", ["1234567890"]))
+
+    def test_short_account_number_never_matches(self):
+        """Guards against colliding with dates/receipt numbers."""
+        self.assertFalse(text_mentions_account("Dankort-nota 12345", ["12345"]))
+
+    def test_no_account_numbers_means_no_match(self):
+        self.assertFalse(text_mentions_account("Overført fra 1234567890", []))
 
     def test_ignore_rule_works_like_any_other(self):
         rules = RuleSet([("Overførsel til opsparing", IGNORED_CATEGORY)])

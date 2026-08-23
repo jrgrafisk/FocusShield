@@ -445,6 +445,49 @@ def check_plan_sheets(context, csv_path):
     check("Ignoreret optræder ikke i Budgetforslag", on_plan, False)
     ignore_doc.close(False)
 
+    # -- internal transfers between the user's own accounts ----------------
+    transfer_table = csvsniff.Table.from_rows([
+        ["Dato", "Tekst", "Beløb"],
+        ["01-05-2025", "Løn maj", "28000,00"],
+        ["03-05-2025", "Netto Amager", "-345,60"],
+        ["10-05-2025", "Overført fra 1234567890", "5000,00"],
+        ["15-05-2025", "Fra konto 5301-1234567890", "2000,00"],
+        ["01-06-2025", "Løn juni", "28000,00"],
+        ["05-06-2025", "Netto Amager", "-289,00"],
+        ["12-06-2025", "Til konto 5301 1234567890", "-1500,00"],
+    ])
+    transfer_mapping = detect_mapping(transfer_table)
+    transfer_result = build_transactions(
+        transfer_table, transfer_mapping, RuleSet.defaults(),
+        BuildOptions(decimal=transfer_mapping.decimal,
+                    dayfirst=transfer_mapping.dayfirst))
+    transfer_doc = new_calc(context)
+    transfer_workbook = budget_office.BudgetWorkbook(transfer_doc)
+    transfer_workbook.build(transfer_result, RuleSet.defaults(), start_balance=10000.0)
+
+    before = budget_office.Summary(transfer_workbook.read_transactions())
+    check("uden kontonumre tæller overførslerne stadig med",
+          before.ignored_count, 0)
+
+    konti_sheet = transfer_doc.Sheets.getByName(budget_office.SHEET_ACCOUNTS)
+    konti_sheet.getCellByPosition(
+        budget_office.ACC_COL_NUMBER, budget_office.ACC_HEADER_ROW + 1
+    ).setString("1234567890")
+    _summary, transfer_changed = transfer_workbook.refresh(RuleSet.defaults())
+    check("Opdatér fanger alle 3 overførsler (2 ind, 1 ud)", transfer_changed, 3)
+
+    after = budget_office.Summary(transfer_workbook.read_transactions())
+    check("3 posteringer er nu ignoreret som intern overførsel",
+          after.ignored_count, 3)
+    check("indkomsten er kun løn efter overførsler er fanget",
+          after.total("Indtægt"), 56000.0)
+    salary_still_counted = any(
+        t.text.startswith("Løn") and t.category != IGNORED_CATEGORY
+        for t in transfer_workbook.read_transactions())
+    check("lønposteringerne bliver IKKE fanget som overførsel",
+          salary_still_counted, True)
+    transfer_doc.close(False)
+
     doc.close(False)
 
 

@@ -25,6 +25,7 @@ from budget_core.plan import (GROUP_FIXED, GROUP_HELP, GROUP_LABELS,
                               GROUP_PERIODIC, GROUP_VARIABLE, build_plan)
 from budget_core.rules import DEFAULT_CATEGORY, IGNORED_CATEGORY
 from budget_core.textutils import fold
+from budget_core.transfers import parse_account_numbers, text_mentions_account
 
 # ---------------------------------------------------------------------------
 # Design tokens taken from the template
@@ -57,7 +58,8 @@ SUMMARY_PREFIX = "Oversigt"
 
 # Konti geometry
 ACC_HEADER_ROW = 4
-ACC_COL_NAME, ACC_COL_TYPE, ACC_COL_BALANCE = 1, 2, 3   # B, C, D (0 based)
+# B, C, D, E (0 based)
+ACC_COL_NAME, ACC_COL_TYPE, ACC_COL_BALANCE, ACC_COL_NUMBER = 1, 2, 3, 4
 ACC_TYPES = ("Lønkonto", "Budgetkonto", "Opsparingskonto", "Andet")
 
 # Budgetforslag geometry
@@ -841,26 +843,34 @@ class BudgetWorkbook(object):
         if self.doc.Sheets.hasByName(SHEET_ACCOUNTS):
             return
         self.write_accounts(self.sheet(SHEET_ACCOUNTS),
-                            [("Lønkonto", "Lønkonto", 0.0),
-                             ("Budgetkonto", "Budgetkonto", 0.0),
-                             ("Opsparingskonto", "Opsparingskonto", 0.0)])
+                            [("Lønkonto", "Lønkonto", 0.0, ""),
+                             ("Budgetkonto", "Budgetkonto", 0.0, ""),
+                             ("Opsparingskonto", "Opsparingskonto", 0.0, "")])
 
     def write_accounts(self, sheet, rows):
-        """Write the whole Konti sheet. ``rows``: [(navn, type, saldo), ...]."""
-        pen = self.pen(sheet)
-        pen.column_widths({0: 4.0, 1: 22.0, 2: 18.0, 3: 16.0})
+        """Write the whole Konti sheet.
 
-        pen.merge("B2:D2")
+        ``rows``: ``[(navn, type, saldo, kontonummer), ...]``.
+        """
+        pen = self.pen(sheet)
+        pen.column_widths({0: 4.0, 1: 22.0, 2: 18.0, 3: 16.0, 4: 22.0})
+
+        pen.merge("B2:E2")
         pen.text("B2", "Konti", font=FONT_TITLE, size=18, bold=True, color=ORANGE,
                  align="left")
-        pen.merge("B3:D3")
+        pen.merge("B3:E3")
         pen.text("B3", "Nuværende saldo. Prognosen bruger summen som "
                        "startsaldo. Sæt en konto pr. kategori i \"%s\" eller "
-                       "\"%s\" for at se, hvordan hver konto udvikler sig."
-                       % (SHEET_RULES, SHEET_PLAN),
+                       "\"%s\" for at se, hvordan hver konto udvikler sig. "
+                       "Sæt dit eget kontonummer under \"Kontonummer(e)\" og "
+                       "tryk \"Opdatér\" for automatisk at få overførsler "
+                       "mellem dine egne konti sat til \"%s\" i stedet for at "
+                       "tælle med som indtægt/udgift - adskil flere numre "
+                       "med komma."
+                       % (SHEET_RULES, SHEET_PLAN, IGNORED_CATEGORY),
                  font=FONT_BODY, size=9, italic=True, color=MUTED, align="left",
                  wrap=True, valign="center")
-        pen.row_height(3, 46)
+        pen.row_height(3, 70)
 
         row = ACC_HEADER_ROW
         pen.text("B%d" % row, "Konto", font=FONT_BODY, size=11, bold=True,
@@ -869,10 +879,12 @@ class BudgetWorkbook(object):
                  color=NAVY, align="left")
         pen.text("D%d" % row, "Saldo", font=FONT_BODY, size=11, bold=True,
                  color=NAVY, align="right")
+        pen.text("E%d" % row, "Kontonummer(e)", font=FONT_BODY, size=11,
+                 bold=True, color=NAVY, align="left")
 
         first = row + 1
-        rows = list(rows) or [("", "", 0.0)]
-        for offset, (name, kind, balance) in enumerate(rows):
+        rows = list(rows) or [("", "", 0.0, "")]
+        for offset, (name, kind, balance, number) in enumerate(rows):
             current = first + offset
             pen.text("B%d" % current, name, font=FONT_BODY, size=10, bold=True,
                      color=DARK, align="left")
@@ -881,6 +893,8 @@ class BudgetWorkbook(object):
             pen.number("D%d" % current, balance, font=FONT_BODY, size=10,
                        color=DARK, align="right", bg=PEACH,
                        fmt=self.formats.currency)
+            pen.text("E%d" % current, number, font=FONT_BODY, size=10,
+                     color=DARK, align="left", bg=PEACH)
 
         last = first + len(rows) - 1
         total_row = last + 2
@@ -894,7 +908,7 @@ class BudgetWorkbook(object):
         self._freeze(sheet, 0, row)
 
     def _scan_accounts(self):
-        """[(navn, type, saldo, ui_row)] from the Konti sheet, or []."""
+        """[(navn, type, saldo, kontonummer, ui_row)] from Konti, or []."""
         if not self.doc.Sheets.hasByName(SHEET_ACCOUNTS):
             return []
         sheet = self.doc.Sheets.getByName(SHEET_ACCOUNTS)
@@ -906,13 +920,21 @@ class BudgetWorkbook(object):
                 continue
             kind = sheet.getCellByPosition(ACC_COL_TYPE, row).getString().strip()
             balance = sheet.getCellByPosition(ACC_COL_BALANCE, row).getValue()
-            accounts.append((name, kind, balance, row + 1))
+            number = sheet.getCellByPosition(ACC_COL_NUMBER, row).getString().strip()
+            accounts.append((name, kind, balance, number, row + 1))
         return accounts
 
     def read_accounts(self):
         """[(navn, type, saldo)] from the Konti sheet, or []."""
         return [(name, kind, balance)
-                for name, kind, balance, _row in self._scan_accounts()]
+                for name, kind, balance, _number, _row in self._scan_accounts()]
+
+    def read_account_numbers(self):
+        """Every account number the user has entered on Konti (digits only)."""
+        numbers = []
+        for _name, _kind, _balance, raw, _row in self._scan_accounts():
+            numbers.extend(parse_account_numbers(raw))
+        return numbers
 
     def _accounts_total(self):
         return sum(balance for _name, _kind, balance in self.read_accounts())
@@ -1274,11 +1296,11 @@ class BudgetWorkbook(object):
         # A freshly seeded Konti sheet has accounts but every balance is
         # still 0 - keep the manual field until the user has actually
         # filled one in, instead of quietly showing a startsaldo of 0.
-        if any(balance for _n, _k, balance, _r in accounts):
+        if any(balance for _n, _k, balance, _num, _r in accounts):
             pen.text("B5", "Startsaldo (sum af konti)", font=FONT_BODY, size=10,
                      bold=True, color=NAVY, align="left")
             reference = "+".join("$%s.D%d" % (SHEET_ACCOUNTS, row)
-                                 for _n, _k, _b, row in accounts)
+                                 for _n, _k, _b, _num, row in accounts)
             pen.formula("D5", "=%s" % reference, font=FONT_BODY, size=10,
                        color=DARK, align="right", fmt=self.formats.currency)
         else:
@@ -1363,7 +1385,7 @@ class BudgetWorkbook(object):
                      align="left" if column == "B" else "right")
 
         row = header
-        for name, _kind, _balance, account_row in accounts:
+        for name, _kind, _balance, _number, account_row in accounts:
             row += 1
             pen.text("B%d" % row, name, font=FONT_BODY, size=10, color=DARK,
                      align="left")
@@ -1722,13 +1744,20 @@ class BudgetWorkbook(object):
             return None, 0
         changed = 0
         sheet = self.doc.Sheets.getByName(SHEET_TX)
+        account_numbers = self.read_account_numbers()
         self.doc.lockControllers()
         try:
             for transaction in transactions:
-                category = ruleset.categorise(transaction.text)
-                if category == DEFAULT_CATEGORY and transaction.category:
-                    # Keep a category the user picked by hand.
-                    category = transaction.category
+                if account_numbers and text_mentions_account(transaction.text,
+                                                              account_numbers):
+                    # A transfer between the user's own accounts - it is not
+                    # real income or a real expense, so it must not count.
+                    category = IGNORED_CATEGORY
+                else:
+                    category = ruleset.categorise(transaction.text)
+                    if category == DEFAULT_CATEGORY and transaction.category:
+                        # Keep a category the user picked by hand.
+                        category = transaction.category
                 if category != transaction.category:
                     column = COL_INC_CAT if transaction.income else COL_EXP_CAT
                     sheet.getCellByPosition(column,

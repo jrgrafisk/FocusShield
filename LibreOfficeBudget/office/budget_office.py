@@ -15,6 +15,7 @@ never talks to the user - dialogs live in ``budget_extension.py``.
 from __future__ import unicode_literals
 
 import datetime
+from collections import Counter
 
 import uno
 
@@ -484,15 +485,17 @@ class BudgetWorkbook(object):
             ref = _ref(first_col, row + 1, first_col + 3, row + 1)
             pen.style(ref, color=MUTED, italic=True)
 
-    def _write_block(self, sheet, transactions, first_col):
+    def _write_block(self, sheet, transactions, first_col, start_row=None):
         if not transactions:
             return
+        if start_row is None:
+            start_row = TX_FIRST_ROW
         data = []
         for t in transactions:
             data.append((float(self.serial(t.date)), abs(t.amount), t.text,
                          t.category))
         target = sheet.getCellRangeByPosition(
-            first_col, TX_FIRST_ROW, first_col + 3, TX_FIRST_ROW + len(data) - 1)
+            first_col, start_row, first_col + 3, start_row + len(data) - 1)
         target.setDataArray(tuple(data))
 
     def _add_category_dropdown(self, sheet, column, last_row):
@@ -1787,6 +1790,91 @@ class BudgetWorkbook(object):
                          color=MUTED, italic=False)
                 pen.style(_ref(first_col + 1, row, first_col + 3, row),
                          color=TEXT_GREY, italic=False)
+
+    def append_transactions(self, new_transactions):
+        """Add more transactions to an existing budget - e.g. next month's
+        CSV export - without touching what is already there.
+
+        ``new_transactions`` must already be categorised (built the same
+        way as for a fresh import, with the current ruleset). Any
+        transaction whose date, text and amount exactly match one already
+        on the sheet is treated as a duplicate (the overlap you get from
+        re-exporting a bank statement that covers some of the same days)
+        and skipped - unless the same combination appears more than once,
+        in which case only that many copies count as duplicates.
+
+        Returns ``(added_count, skipped_count, truncated, summary)``.
+        ``summary`` is ``None`` when there was nothing new to add.
+        """
+        sheet = self.doc.Sheets.getByName(SHEET_TX)
+        existing = self.read_transactions()
+        existing_keys = Counter(
+            (t.date, t.text, round(t.amount, 2)) for t in existing)
+
+        added = []
+        skipped = 0
+        for t in new_transactions:
+            key = (t.date, t.text, round(t.amount, 2))
+            if existing_keys[key] > 0:
+                existing_keys[key] -= 1
+                skipped += 1
+            else:
+                added.append(t)
+
+        if not added:
+            return 0, skipped, False, None
+
+        existing_expenses = [t for t in existing if not t.income]
+        existing_income = [t for t in existing if t.income]
+        new_expenses = [t for t in added if t.amount < 0]
+        new_income = [t for t in added if t.amount >= 0]
+
+        room_exp = max(TX_MAX_ROW - TX_FIRST_ROW - len(existing_expenses), 0)
+        room_inc = max(TX_MAX_ROW - TX_FIRST_ROW - len(existing_income), 0)
+        truncated = False
+        if len(new_expenses) > room_exp:
+            new_expenses = new_expenses[:room_exp]
+            truncated = True
+        if len(new_income) > room_inc:
+            new_income = new_income[:room_inc]
+            truncated = True
+
+        self.doc.lockControllers()
+        try:
+            self._write_block(sheet, new_expenses, COL_EXP_DATE,
+                              start_row=TX_FIRST_ROW + len(existing_expenses))
+            self._write_block(sheet, new_income, COL_INC_DATE,
+                              start_row=TX_FIRST_ROW + len(existing_income))
+
+            pen = self.pen(sheet)
+            new_exp_count = len(existing_expenses) + len(new_expenses)
+            new_inc_count = len(existing_income) + len(new_income)
+            last = TX_FIRST_ROW + max(new_exp_count, new_inc_count, 1)
+            for first_col in (COL_EXP_DATE, COL_INC_DATE):
+                date_ref = _ref(first_col, TX_FIRST_ROW + 1, first_col, last)
+                amount_ref = _ref(first_col + 1, TX_FIRST_ROW + 1, first_col + 1, last)
+                text_ref = _ref(first_col + 2, TX_FIRST_ROW + 1, first_col + 3, last)
+                pen.style(date_ref, fmt=self.formats.date, font=FONT_BODY, size=10,
+                         color=MUTED, align="left")
+                pen.style(amount_ref, fmt=self.formats.currency2, font=FONT_BODY,
+                         size=10, color=TEXT_GREY, bold=True, align="left")
+                pen.style(text_ref, font=FONT_BODY, size=10, color=TEXT_GREY,
+                         align="left")
+
+            all_transactions = self.read_transactions()
+            self._apply_ignored_styling(sheet, all_transactions)
+
+            self._add_category_dropdown(sheet, COL_EXP_CAT, last)
+            self._add_category_dropdown(sheet, COL_INC_CAT, last)
+            self._print_setup(sheet, COL_INC_CAT, last)
+            self._freeze(sheet, 0, TX_FIRST_ROW)
+        finally:
+            self.doc.unlockControllers()
+
+        planned = self.read_planned()
+        start_balance = self.read_start_balance()
+        summary = self.rebuild_summaries(all_transactions, planned, start_balance)
+        return len(added), skipped, truncated, summary
 
     def rebuild_summaries(self, transactions, planned, start_balance):
         """Recreate the summary sheets (and the month overview) in place."""

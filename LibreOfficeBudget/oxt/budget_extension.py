@@ -72,6 +72,8 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         try:
             if action in ("", "import"):
                 self.import_csv()
+            elif action == "importappend":
+                self.import_csv_append()
             elif action == "sheet":
                 self.import_active_sheet()
             elif action in ("refresh", "recalc"):
@@ -215,6 +217,78 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         summary = workbook.build(result, ruleset, start_balance=start_balance,
                                  suggest_planned=settings["suggest"])
         self.message("Budget fra CSV", _done_text(result, summary, table))
+
+    def import_csv_append(self):
+        """Add another CSV file's postings to the budget that is already
+        open - e.g. fetch the latest month from the bank and merge it into
+        what has already been imported, instead of starting over."""
+        workbook = self._workbook()
+        if workbook is None:
+            return
+        path = self.pick_file()
+        if not path:
+            return
+        try:
+            table = csvsniff.read_table(path=path)
+        except Exception as exc:
+            self.message("Budget fra CSV", "Kunne ikke læse filen:\n%s" % exc,
+                         kind="ERRORBOX")
+            return
+        self._import_table_append(workbook, table, os.path.basename(path))
+
+    def _import_table_append(self, workbook, table, source_name):
+        if not table.rows:
+            self.message("Budget fra CSV",
+                         "Fandt ingen datarækker i %s." % source_name)
+            return
+        mapping = column_detect.detect_mapping(table)
+        settings = self.options_dialog(table, mapping, source_name)
+        if settings is None:
+            return
+
+        mapping.date = settings["date"]
+        mapping.text = settings["text"]
+        mapping.amount = settings["amount"]
+        mapping.amount_in = settings["amount_in"]
+        mapping.amount_out = settings["amount_out"]
+        if mapping.amount_in is not None or mapping.amount_out is not None:
+            mapping.amount = None
+        mapping.decimal = settings["decimal"]
+        mapping.dayfirst = settings["dayfirst"]
+
+        # Categorise the new rows with the rules already in this budget,
+        # not the defaults - so a shop the user has already taught the
+        # extension about gets the right category from the start.
+        rows = workbook.read_rules()
+        ruleset = RuleSet(rows) if rows else load_rules()
+        options = BuildOptions(decimal=settings["decimal"],
+                               dayfirst=settings["dayfirst"],
+                               sign=settings["sign"])
+        result = build_transactions(table, mapping, ruleset, options)
+        if not result.ok:
+            self.message("Budget fra CSV",
+                         "Der kunne ikke tilføjes posteringer.\n\n%s"
+                         % "\n".join(result.summary_lines()), kind="ERRORBOX")
+            return
+
+        added, skipped, truncated, summary = workbook.append_transactions(
+            result.transactions)
+        if summary is None:
+            self.message("Budget fra CSV",
+                         "Ingen nye posteringer - alle %d postering(er) i "
+                         "%s findes i forvejen i budgettet." % (skipped, source_name))
+            return
+
+        lines = ["%d ny(e) postering(er) tilføjet fra %s." % (added, source_name)]
+        if skipped:
+            lines.append("%d postering(er) fandtes allerede og blev sprunget over."
+                         % skipped)
+        if truncated:
+            lines.append("Bemærk: budgettet kan højst rumme %d posteringer pr. "
+                         "type (udgift/indtægt) - nogle af de nyeste blev ikke "
+                         "tilføjet." % (budget_office.TX_MAX_ROW - budget_office.TX_FIRST_ROW))
+        lines.append("%d måned(er) i budgettet nu." % len(summary.months))
+        self.message("Budget fra CSV", "\n".join(lines))
 
     def import_headless(self, path):
         """Import a file with the detected settings and no dialogs at all."""

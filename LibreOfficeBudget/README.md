@@ -189,6 +189,15 @@ bevares. Reglerne gemmes samtidig i din brugerprofil
 
 * **Lav budget ud fra det aktive ark** — samme funktion, men på et ark der
   allerede er åbent. Brug den til `.xlsx`/`.ods`-filer: åbn dem i Calc først.
+* **Tilføj flere posteringer (CSV)…** — importér endnu en CSV-fil ind i det
+  budget, der allerede er åbent, i stedet for at starte forfra. Brug den til
+  fx at hente den seneste måneds udtræk fra netbanken og lægge det til det,
+  du allerede har importeret. Nye posteringer kategoriseres med de regler,
+  du allerede har lavet i dette budget. Poster, der er identiske med noget,
+  der allerede findes (samme dato, tekst og beløb — det, man typisk får, når
+  et nyt udtræk overlapper lidt med det forrige), springes automatisk over,
+  så de ikke tælles dobbelt. Alt, du selv har rettet på de eksisterende
+  posteringer (kategori, ignorér-status osv.), rører den ikke ved.
 * **Kategorisér poster uden kategori…** og **Kategorier - opret, omdøb, slet…**
   (se ovenfor).
 * **Konti - ret saldi…** — hopper til (og opretter om nødvendigt) arket Konti.

@@ -488,6 +488,73 @@ def check_plan_sheets(context, csv_path):
           salary_still_counted, True)
     transfer_doc.close(False)
 
+    # -- appending a second CSV to an existing budget -----------------------
+    append_table1 = csvsniff.Table.from_rows([
+        ["Dato", "Tekst", "Beløb"],
+        ["01-05-2025", "Løn maj", "28000,00"],
+        ["02-05-2025", "Netto Amager", "-345,60"],
+        ["10-05-2025", "Circle K Amager", "-450,00"],
+    ])
+    append_mapping1 = detect_mapping(append_table1)
+    append_ruleset = RuleSet.defaults()
+    append_result1 = build_transactions(
+        append_table1, append_mapping1, append_ruleset,
+        BuildOptions(decimal=append_mapping1.decimal,
+                    dayfirst=append_mapping1.dayfirst))
+    append_doc = new_calc(context)
+    append_workbook = budget_office.BudgetWorkbook(append_doc)
+    append_workbook.build(append_result1, append_ruleset, start_balance=10000.0)
+    check("append: 3 posteringer efter foerste import",
+          len(append_workbook.read_transactions()), 3)
+
+    # A hand-picked category on an existing row must survive an append.
+    append_tx_sheet = append_doc.Sheets.getByName(budget_office.SHEET_TX)
+    for row in range(budget_office.TX_FIRST_ROW, budget_office.TX_FIRST_ROW + 5):
+        if append_tx_sheet.getCellByPosition(
+                budget_office.COL_EXP_TEXT, row).getString() == "Circle K Amager":
+            append_tx_sheet.getCellByPosition(
+                budget_office.COL_EXP_CAT, row).setString("Arbejdskørsel")
+            break
+
+    # The second file overlaps the first by one day (a common pattern when
+    # re-exporting a bank statement) and adds a new month.
+    append_table2 = csvsniff.Table.from_rows([
+        ["Dato", "Tekst", "Beløb"],
+        ["02-05-2025", "Netto Amager", "-345,60"],   # duplicate of row above
+        ["01-06-2025", "Løn juni", "28000,00"],
+        ["03-06-2025", "Netto Amager", "-289,00"],
+    ])
+    append_mapping2 = detect_mapping(append_table2)
+    append_rows = append_workbook.read_rules()
+    append_ruleset2 = RuleSet(append_rows) if append_rows else RuleSet.defaults()
+    append_result2 = build_transactions(
+        append_table2, append_mapping2, append_ruleset2,
+        BuildOptions(decimal=append_mapping2.decimal,
+                    dayfirst=append_mapping2.dayfirst))
+    added, skipped, truncated, append_summary = append_workbook.append_transactions(
+        append_result2.transactions)
+    check("append: 2 nye posteringer tilføjet (duplikat sprunget over)", added, 2)
+    check("append: 1 postering sprunget over som duplikat", skipped, 1)
+    check("append: ikke afkortet", truncated, False)
+
+    append_all = append_workbook.read_transactions()
+    check("append: 5 posteringer i alt (3+2, ikke 3+3)", len(append_all), 5)
+    check("append: 2 måneder i budgettet nu", len(append_summary.months), 2)
+    check("append: håndvalgt kategori på gammel række overlevede",
+          any(t.text == "Circle K Amager" and t.category == "Arbejdskørsel"
+              for t in append_all), True)
+
+    # Re-appending the exact same file must add nothing.
+    append_result3 = build_transactions(
+        append_table2, append_mapping2, append_ruleset2,
+        BuildOptions(decimal=append_mapping2.decimal,
+                    dayfirst=append_mapping2.dayfirst))
+    added2, skipped2, _truncated2, summary_none = append_workbook.append_transactions(
+        append_result3.transactions)
+    check("append: gen-import af samme fil tilføjer intet", added2, 0)
+    check("append: summary er None når intet er nyt", summary_none, None)
+    append_doc.close(False)
+
     doc.close(False)
 
 

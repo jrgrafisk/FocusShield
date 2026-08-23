@@ -33,6 +33,22 @@
             </prop>
           </node>
 
+          <node oor:name="m01a" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?importappend</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value xml:lang="da">Tilføj flere posteringer (CSV)...</value>
+              <value xml:lang="en-US">Add more postings (CSV)...</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+            <prop oor:name="Context" oor:type="xs:string">
+              <value>com.sun.star.sheet.SpreadsheetDocument</value>
+            </prop>
+          </node>
+
           <node oor:name="m02" oor:op="replace">
             <prop oor:name="URL" oor:type="xs:string">
               <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?sheet</value>

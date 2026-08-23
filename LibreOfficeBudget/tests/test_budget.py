@@ -20,6 +20,8 @@ from budget_core.budget import (BuildOptions, KIND_EXPENSE, KIND_INCOME,
 from budget_core.columns import detect_mapping
 from budget_core.parsing import (detect_dayfirst, detect_decimal_separator,
                                  month_key, parse_amount, parse_date)
+from budget_core.plan import (GROUP_FIXED, GROUP_PERIODIC, GROUP_VARIABLE,
+                              build_plan)
 from budget_core.rules import DEFAULT_CATEGORY, RuleSet
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -286,6 +288,106 @@ class SummaryTests(unittest.TestCase):
         totals = [abs(summary.category_total(KIND_EXPENSE, c))
                   for c in summary.expense_categories]
         self.assertEqual(totals, sorted(totals, reverse=True))
+
+
+class PlanTests(unittest.TestCase):
+    """The draft budget built from a full year of transactions."""
+
+    @classmethod
+    def setUpClass(cls):
+        _table, _mapping, result = build("aar_2024.csv")
+        cls.result = result
+        cls.summary = summarise(result.transactions)
+        cls.plan = build_plan(cls.summary)
+        cls.by_category = dict(((c.kind, c.category), c)
+                               for c in cls.plan.categories)
+
+    def entry(self, category, kind=KIND_EXPENSE):
+        return self.by_category[(kind, category)]
+
+    def test_twelve_months(self):
+        self.assertEqual(len(self.plan.months), 12)
+        self.assertFalse(self.plan.uncertain)
+
+    def test_rent_is_fixed(self):
+        rent = self.entry("Bolig")
+        self.assertEqual(rent.group, GROUP_FIXED)
+        self.assertAlmostEqual(rent.mean_all, 9200.0, places=2)
+        self.assertEqual(rent.suggestion, 9200.0)
+
+    def test_loan_and_insurance_are_fixed(self):
+        for category in ("Lån og afdrag", "Forsikring og pension",
+                         "Telefon og internet", "Abonnementer"):
+            self.assertEqual(self.entry(category).group, GROUP_FIXED, category)
+
+    def test_groceries_are_variable_and_use_the_median(self):
+        """A steady monthly total is still a spending decision, not a bill."""
+        groceries = self.entry("Dagligvarer")
+        self.assertEqual(groceries.group, GROUP_VARIABLE)
+        self.assertLess(groceries.variation, 0.3)      # steady, but still variable
+        self.assertAlmostEqual(groceries.suggestion,
+                               round(groceries.median / 50.0) * 50, places=2)
+
+    def test_quarterly_bill_is_spread_over_the_year(self):
+        power = self.entry("El, vand og varme")
+        self.assertEqual(power.group, GROUP_PERIODIC)
+        self.assertLess(power.coverage, 0.9)
+        # Budget the yearly total per month, not the size of one bill.
+        self.assertLess(power.suggestion, power.median)
+        self.assertAlmostEqual(power.suggestion, power.mean_all, delta=50)
+
+    def test_holiday_is_periodic(self):
+        holiday = self.entry("Rejser")
+        self.assertEqual(holiday.group, GROUP_PERIODIC)
+        self.assertEqual(holiday.months_present, 1)
+        self.assertAlmostEqual(holiday.suggestion, holiday.total / 12.0, delta=50)
+
+    def test_income_is_conservative(self):
+        """Bonus months must not inflate the budgeted income."""
+        salary = self.entry("Løn", KIND_INCOME)
+        self.assertLess(salary.suggestion, salary.mean_all)
+        self.assertAlmostEqual(salary.suggestion, 31400.0, places=2)
+
+    def test_quarterly_income_is_spread(self):
+        benefit = self.entry("Offentlige ydelser", KIND_INCOME)
+        self.assertEqual(benefit.months_present, 4)
+        self.assertAlmostEqual(benefit.suggestion, benefit.mean_all, delta=100)
+
+    def test_totals_add_up(self):
+        expenses = sum(c.mean_all for c in self.plan.expenses)
+        self.assertAlmostEqual(self.plan.expense_mean, expenses, places=2)
+        self.assertAlmostEqual(self.plan.savings_mean,
+                               self.plan.income_mean - self.plan.expense_mean,
+                               places=2)
+        # The suggestion is deliberately more careful than the average.
+        self.assertLess(self.plan.savings_suggested, self.plan.savings_mean)
+        self.assertGreater(self.plan.savings_suggested, 0)
+
+    def test_every_category_is_grouped(self):
+        grouped = sum(len(v) for v in self.plan.groups.values())
+        self.assertEqual(grouped, len(self.plan.expenses))
+
+    def test_short_period_is_flagged(self):
+        _table, _mapping, result = build("danskebank.csv")
+        plan = build_plan(summarise(result.transactions))
+        self.assertTrue(plan.uncertain)
+
+
+class YearFileTests(unittest.TestCase):
+    """The generated year of Danish transactions parses cleanly."""
+
+    def test_everything_is_categorised(self):
+        _table, _mapping, result = build("aar_2024.csv")
+        self.assertGreater(len(result.transactions), 350)
+        self.assertEqual(result.uncategorised, [])
+        self.assertEqual(result.skipped_no_date, 0)
+        self.assertEqual(result.skipped_no_amount, 0)
+
+    def test_salary_beats_transfer(self):
+        rules = RuleSet.defaults()
+        self.assertEqual(rules.categorise("LØN OVERFØRSEL DANSK FIRMA A/S"), "Løn")
+        self.assertEqual(rules.categorise("AFDRAG BILLÅN SANTANDER CONSUMER"),
+                         "Lån og afdrag")
 
 
 class RuleTests(unittest.TestCase):

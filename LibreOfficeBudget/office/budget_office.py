@@ -20,6 +20,8 @@ import uno
 
 from budget_core.budget import KIND_EXPENSE, KIND_INCOME, Summary
 from budget_core.parsing import MONTH_NAMES_DA
+from budget_core.plan import (GROUP_FIXED, GROUP_HELP, GROUP_LABELS,
+                              GROUP_PERIODIC, GROUP_VARIABLE, build_plan)
 from budget_core.rules import DEFAULT_CATEGORY
 
 # ---------------------------------------------------------------------------
@@ -45,7 +47,17 @@ NORMAL_WEIGHT = 100.0
 SHEET_TX = "Transaktioner"
 SHEET_RULES = "Kategorier"
 SHEET_MONTHS = "Alle måneder"
+SHEET_PLAN = "Budgetforslag"
+SHEET_FORECAST = "Prognose"
 SUMMARY_PREFIX = "Oversigt"
+
+# Budgetforslag geometry
+PLAN_HEADER_ROW = 5
+PLAN_COL_NAME, PLAN_COL_MEAN, PLAN_COL_TARGET, PLAN_COL_DIFF = "B", "D", "H", "I"
+
+# Prognose
+FORECAST_MONTHS = 24
+FORECAST_HEADER_ROW = 9
 
 # Transactions sheet geometry (0 based columns)
 TX_FIRST_ROW = 4           # row 5 in the UI
@@ -300,6 +312,12 @@ class BudgetWorkbook(object):
             self.write_transactions(tx_sheet, transactions)
             self.write_rules(self.sheet(SHEET_RULES), ruleset, summary)
 
+            plan = build_plan(summary) if len(summary.months) > 1 else None
+            if plan is not None:
+                plan_rows = self.write_plan(self.sheet(SHEET_PLAN), plan)
+                self.write_forecast(self.sheet(SHEET_FORECAST), plan, plan_rows,
+                                    (start_balance or 0.0) + summary.net)
+
             planned = self._planned_values(summary) if suggest_planned else {}
             previous = None
             for index, month in enumerate(months):
@@ -317,7 +335,8 @@ class BudgetWorkbook(object):
         finally:
             self.doc.unlockControllers()
         self.doc.calculateAll()
-        self._activate(self.summary_name(months, months[0]))
+        self._activate(SHEET_PLAN if self.doc.Sheets.hasByName(SHEET_PLAN)
+                       else self.summary_name(months, months[0]))
         return summary
 
     def summary_name(self, months, month):
@@ -334,7 +353,8 @@ class BudgetWorkbook(object):
 
     def _order_sheets(self, months):
         """Summaries first, then transactions, months and rules."""
-        order = [self.summary_name(months, m) for m in months]
+        order = [SHEET_PLAN, SHEET_FORECAST]
+        order += [self.summary_name(months, m) for m in months]
         order += [SHEET_TX, SHEET_MONTHS, SHEET_RULES]
         sheets = self.doc.Sheets
         position = 0
@@ -839,6 +859,445 @@ class BudgetWorkbook(object):
                         align="right", fmt=self.formats.currency)
         return total_row + 1
 
+
+    # -- Budgetforslag ----------------------------------------------------
+    def write_plan(self, sheet, plan, targets=None):
+        """A draft budget for a normal month, with an editable target column."""
+        pen = self.pen(sheet)
+        targets = targets or {}
+        pen.column_widths({0: 4.0, 1: 26.0, 2: 6.0, 3: 12.5, 4: 12.5, 5: 12.5,
+                           6: 12.5, 7: 13.5, 8: 13.5})
+
+        pen.merge("B2:E2")
+        pen.text("B2", "Budgetforslag", font=FONT_TITLE, size=18, bold=True,
+                 color=ORANGE, align="left")
+        first, last = plan.months[0], plan.months[-1]
+        note = ("Bygger på %d måneder (%s - %s). Skriv dine egne tal i kolonnen "
+                "\"Mål\" - \"Forskel\" viser, hvor meget du skal spare (minus) "
+                "eller har i luft (plus) i forhold til dit nuværende forbrug."
+                % (len(plan.months), month_title(first).lower(),
+                   month_title(last).lower()))
+        if plan.uncertain:
+            note += " Bemærk: få måneders data - tallene er usikre."
+        pen.merge("B3:I3")
+        pen.text("B3", note, font=FONT_BODY, size=9, italic=True, color=MUTED,
+                 align="left", wrap=True, valign="center")
+        pen.row_height(3, 26)
+
+        row = PLAN_HEADER_ROW
+        pen.merge("B%d:C%d" % (row, row))
+        pen.text("B%d" % row, "Kategori", font=FONT_BODY, size=11, bold=True,
+                 color=NAVY, align="left")
+        for column, title in (("D", "Gns./md"), ("E", "Typisk md"),
+                              ("F", "Laveste"), ("G", "Højeste"),
+                              ("H", "Mål"), ("I", "Forskel")):
+            pen.text("%s%d" % (column, row), title, font=FONT_BODY, size=11,
+                     bold=True, color=NAVY, align="right")
+
+        rows = {}
+        row += 1
+        row, rows["income"] = self._plan_block(
+            pen, row, "INDTÆGTER", "Forslaget er en typisk måned - ikke den bedste.",
+            plan.income, targets, "Indtægt i alt")
+
+        group_rows = []
+        for group in (GROUP_FIXED, GROUP_VARIABLE, GROUP_PERIODIC):
+            entries = plan.groups.get(group, [])
+            if not entries:
+                continue
+            row += 1
+            row, total_row = self._plan_block(
+                pen, row, GROUP_LABELS[group], GROUP_HELP[group], entries,
+                targets, "I alt")
+            group_rows.append(total_row)
+
+        row += 1
+        rows["expense"] = row
+        pen.merge("B%d:C%d" % (row, row))
+        pen.text("B%d" % row, "UDGIFTER I ALT", font=FONT_BODY, size=11,
+                 bold=True, color=WHITE, bg=NAVY, align="left")
+        for column in ("D", "H", "I"):
+            reference = "+".join("%s%d" % (column, r) for r in group_rows) or "0"
+            pen.formula("%s%d" % (column, row), "=%s" % reference,
+                        font=FONT_BODY, size=11, bold=True, color=WHITE, bg=NAVY,
+                        align="right",
+                        fmt=self.formats.signed if column == "I"
+                        else self.formats.currency)
+
+        row += 1
+        rows["savings"] = row
+        pen.merge("B%d:C%d" % (row, row))
+        pen.text("B%d" % row, "TIL OPSPARING", font=FONT_BODY, size=11, bold=True,
+                 color=WHITE, bg=ORANGE, align="left")
+        for column in ("D", "H"):
+            pen.formula("%s%d" % (column, row),
+                        "=%s%d-%s%d" % (column, rows["income"], column,
+                                        rows["expense"]),
+                        font=FONT_BODY, size=11, bold=True, color=WHITE,
+                        bg=ORANGE, align="right", fmt=self.formats.currency)
+        for column in ("E", "F", "G"):
+            pen.style("%s%d" % (column, row), bg=ORANGE)
+        pen.formula("I%d" % row, "=H%d-D%d" % (row, row), font=FONT_BODY, size=11,
+                    bold=True, color=WHITE, bg=ORANGE, align="right",
+                    fmt=self.formats.signed)
+
+        row += 2
+        rows["goal"] = row
+        pen.merge("B%d:C%d" % (row, row))
+        pen.text("B%d" % row, "Opsparingsmål pr. måned", font=FONT_BODY, size=10,
+                 bold=True, color=NAVY, align="left")
+        goal = targets.get(("MÅL", "Opsparingsmål"),
+                           max(0.0, _round_500(plan.savings_suggested)))
+        pen.number("H%d" % row, goal, font=FONT_BODY, size=10, color=DARK,
+                   align="right", bg=PEACH, fmt=self.formats.currency)
+        row += 1
+        rows["gap"] = row
+        pen.merge("B%d:C%d" % (row, row))
+        pen.text("B%d" % row, "Forskel til opsparingsmålet", font=FONT_BODY,
+                 size=10, bold=True, color=NAVY, align="left")
+        pen.formula("H%d" % row, "=H%d-H%d" % (rows["savings"], rows["goal"]),
+                    font=FONT_BODY, size=10, bold=True, color=DARK, align="right",
+                    fmt=self.formats.signed)
+        pen.merge("I%d:I%d" % (row, row))
+        pen.formula("D%d" % row,
+                    '=IF(H%d<0;"Du mangler at spare et beløb for at nå målet";'
+                    '"Målet er inden for rækkevidde")' % row,
+                    font=FONT_BODY, size=9, italic=True, color=MUTED, align="left")
+
+        self._print_setup(sheet, 8, row + 1)
+        self._freeze(sheet, 0, PLAN_HEADER_ROW)
+        return rows
+
+    def _plan_block(self, pen, row, title, help_text, entries, targets, total_label):
+        """One section of the draft budget; returns (next_row, total_row)."""
+        pen.merge("B%d:C%d" % (row, row))
+        pen.text("B%d" % row, title, font=FONT_BODY, size=11, bold=True,
+                 color=WHITE, bg=NAVY, align="left")
+        pen.merge("D%d:I%d" % (row, row))
+        pen.text("D%d" % row, help_text, font=FONT_BODY, size=9, italic=True,
+                 color=LIGHT_TEXT, bg=NAVY, align="left", valign="center")
+
+        first = row + 1
+        for offset, entry in enumerate(entries):
+            current = first + offset
+            pen.merge("B%d:C%d" % (current, current))
+            pen.text("B%d" % current, entry.category, font=FONT_BODY, size=10,
+                     bold=True, color=DARK, align="left")
+            for column, value in (("D", entry.mean_all), ("E", entry.median),
+                                  ("F", entry.low), ("G", entry.high)):
+                pen.number("%s%d" % (column, current), value, font=FONT_BODY,
+                           size=10, color=DARK if column == "D" else MUTED,
+                           align="right", fmt=self.formats.currency)
+            target = targets.get((entry.kind, entry.category), entry.suggestion)
+            pen.number("H%d" % current, target, font=FONT_BODY, size=10,
+                       color=DARK, align="right", bg=PEACH,
+                       fmt=self.formats.currency)
+            pen.formula("I%d" % current, "=H%d-D%d" % (current, current),
+                        font=FONT_BODY, size=10, color=MUTED, align="right",
+                        fmt=self.formats.signed)
+
+        total_row = first + len(entries)
+        pen.merge("B%d:C%d" % (total_row, total_row))
+        pen.text("B%d" % total_row, total_label, font=FONT_BODY, size=10,
+                 bold=True, color=NAVY, align="left")
+        # Only the average, the target and the difference add up; a sum of
+        # medians would be nonsense.
+        for column in ("D", "H", "I"):
+            pen.formula("%s%d" % (column, total_row),
+                        "=SUM(%s%d:%s%d)" % (column, first, column, total_row - 1),
+                        font=FONT_BODY, size=10, bold=True, color=NAVY,
+                        align="right",
+                        fmt=self.formats.signed if column == "I"
+                        else self.formats.currency)
+        return total_row + 1, total_row
+
+    def read_targets(self):
+        """The target amounts the user typed, so a rebuild keeps them."""
+        targets = {}
+        if not self.doc.Sheets.hasByName(SHEET_PLAN):
+            return targets
+        sheet = self.doc.Sheets.getByName(SHEET_PLAN)
+        last_row = used_row_count(sheet)
+        if last_row < PLAN_HEADER_ROW:
+            return targets
+        data = sheet.getCellRangeByPosition(1, PLAN_HEADER_ROW, 7,
+                                            last_row).getDataArray()
+        kind = KIND_INCOME
+        for row in data:
+            name = str(row[0]).strip()
+            value = row[6]
+            if not name:
+                continue
+            upper = name.upper()
+            if upper.startswith("INDTÆGT"):
+                kind = KIND_INCOME
+                continue
+            if upper.endswith("UDGIFTER") or "UDGIFTER" in upper:
+                kind = KIND_EXPENSE
+                continue
+            if name == "Opsparingsmål pr. måned" and isinstance(value, float):
+                targets[("MÅL", "Opsparingsmål")] = value
+                continue
+            if name.lower().startswith("i alt") or upper.startswith("TIL OPSPARING") \
+                    or upper.startswith("FORSKEL"):
+                continue
+            if isinstance(value, float):
+                targets[(kind, name)] = value
+        return targets
+
+    # -- Prognose ---------------------------------------------------------
+    def write_forecast(self, sheet, plan, plan_rows, start_balance):
+        """Where the balance ends up if nothing changes - and if you hit the goals."""
+        pen = self.pen(sheet)
+        pen.column_widths({0: 4.0, 1: 16.0, 2: 13.0, 3: 13.0, 4: 13.5, 5: 14.5,
+                           6: 15.0, 7: 15.5})
+
+        pen.merge("B2:E2")
+        pen.text("B2", "Prognose", font=FONT_TITLE, size=18, bold=True,
+                 color=ORANGE, align="left")
+        pen.merge("B3:H3")
+        pen.text("B3", "Sådan udvikler saldoen sig de næste %d måneder, hvis alt "
+                       "fortsætter som nu - og hvis du rammer målene i "
+                       "\"Budgetforslag\"." % FORECAST_MONTHS,
+                 font=FONT_BODY, size=9, italic=True, color=MUTED, align="left",
+                 wrap=True, valign="center")
+
+        pen.merge("B5:C5")
+        pen.text("B5", "Startsaldo", font=FONT_BODY, size=10, bold=True,
+                 color=NAVY, align="left")
+        pen.number("D5", start_balance or 0.0, font=FONT_BODY, size=10,
+                   color=DARK, align="right", bg=PEACH, fmt=self.formats.currency)
+        pen.merge("B6:C6")
+        pen.text("B6", "Netto pr. måned som nu", font=FONT_BODY, size=10,
+                 color=TEXT_GREY, align="left")
+        pen.formula("D6", "=$%s.$D$%d" % (SHEET_PLAN, plan_rows["savings"]),
+                    font=FONT_BODY, size=10, color=NAVY, bold=True, align="right",
+                    fmt=self.formats.signed)
+        pen.merge("B7:C7")
+        pen.text("B7", "Netto pr. måned med dine mål", font=FONT_BODY, size=10,
+                 color=TEXT_GREY, align="left")
+        pen.formula("D7", "=$%s.$H$%d" % (SHEET_PLAN, plan_rows["savings"]),
+                    font=FONT_BODY, size=10, color=ORANGE, bold=True,
+                    align="right", fmt=self.formats.signed)
+
+        head = FORECAST_HEADER_ROW
+        for column, title in (("B", "Måned"), ("C", "Indtægt"), ("D", "Udgifter"),
+                              ("E", "Netto nu"), ("F", "Netto m. mål"),
+                              ("G", "Saldo nu"), ("H", "Saldo m. mål")):
+            pen.text("%s%d" % (column, head), title, font=FONT_BODY, size=11,
+                     bold=True, color=NAVY,
+                     align="left" if column == "B" else "right")
+
+        month = _next_month(plan.months[-1])
+        for index in range(FORECAST_MONTHS):
+            row = head + 1 + index
+            pen.date("B%d" % row, month, font=FONT_BODY, size=10, color=DARK,
+                     align="left", fmt=self.formats.month)
+            pen.formula("C%d" % row, "=$%s.$D$%d" % (SHEET_PLAN, plan_rows["income"]),
+                        font=FONT_BODY, size=10, color=MUTED, align="right",
+                        fmt=self.formats.currency)
+            pen.formula("D%d" % row, "=$%s.$D$%d" % (SHEET_PLAN, plan_rows["expense"]),
+                        font=FONT_BODY, size=10, color=MUTED, align="right",
+                        fmt=self.formats.currency)
+            pen.formula("E%d" % row, "=C%d-D%d" % (row, row), font=FONT_BODY,
+                        size=10, color=NAVY, align="right", fmt=self.formats.signed)
+            pen.formula("F%d" % row, "=$D$7", font=FONT_BODY, size=10,
+                        color=ORANGE, align="right", fmt=self.formats.signed)
+            previous = "$D$5" if index == 0 else "G%d" % (row - 1)
+            pen.formula("G%d" % row, "=%s+E%d" % (previous, row), font=FONT_BODY,
+                        size=10, bold=True, color=NAVY, align="right",
+                        fmt=self.formats.currency)
+            previous = "$D$5" if index == 0 else "H%d" % (row - 1)
+            pen.formula("H%d" % row, "=%s+F%d" % (previous, row), font=FONT_BODY,
+                        size=10, bold=True, color=ORANGE, align="right",
+                        fmt=self.formats.currency)
+            month = _next_month("%04d-%02d" % (month.year, month.month))
+
+        last_row = head + FORECAST_MONTHS
+        self._add_forecast_chart(sheet, head, last_row)
+        self._print_setup(sheet, 7, last_row + 24)
+        self._freeze(sheet, 0, head)
+        return last_row
+
+    def _add_forecast_chart(self, sheet, header_row, last_row):
+        """A line chart of the two balance columns."""
+        try:
+            charts = sheet.Charts
+            name = "Saldoudvikling"
+            if charts.hasByName(name):
+                charts.removeByName(name)
+            rect = uno.createUnoStruct("com.sun.star.awt.Rectangle")
+            rect.X, rect.Y = 500, 1200 + int(last_row * 450)
+            rect.Width, rect.Height = 24000, 10000
+            index = sheet.RangeAddress.Sheet
+            ranges = []
+            for start, end in ((1, 1), (6, 7)):          # column B, columns G:H
+                address = uno.createUnoStruct("com.sun.star.table.CellRangeAddress")
+                address.Sheet = index
+                address.StartColumn, address.EndColumn = start, end
+                address.StartRow, address.EndRow = header_row - 1, last_row - 1
+                ranges.append(address)
+            charts.addNewByName(name, rect, tuple(ranges), True, True)
+            chart = charts.getByName(name).EmbeddedObject
+            chart.setDiagram(chart.createInstance("com.sun.star.chart.LineDiagram"))
+            chart.Diagram.SymbolType = -3
+            chart.Diagram.Lines = True
+            chart.HasMainTitle = True
+            chart.Title.String = "Udvikling i saldo"
+            chart.HasLegend = True
+            try:
+                chart.Area.FillStyle = _enum("com.sun.star.drawing.FillStyle",
+                                             "NONE")
+                wall = chart.Diagram.getWall()
+                wall.FillStyle = _enum("com.sun.star.drawing.FillStyle", "SOLID")
+                wall.FillColor = WHITE
+                wall.LineColor = PANEL
+            except Exception:
+                pass
+            for series, colour in ((0, NAVY), (1, ORANGE)):
+                try:
+                    properties = chart.Diagram.getDataRowProperties(series)
+                    properties.LineColor = colour
+                    properties.LineWidth = 60
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+
+    # -- categories -------------------------------------------------------
+    def rebuild(self):
+        """Rebuild every summary from what is on the transactions sheet."""
+        transactions = self.read_transactions()
+        if not transactions:
+            return None
+        return self.rebuild_summaries(transactions, self.read_planned(),
+                                      self.read_start_balance())
+
+    def category_list(self):
+        """The categories offered in the drop-down, plus the ones in use."""
+        names = []
+        if self.doc.Sheets.hasByName(SHEET_RULES):
+            sheet = self.doc.Sheets.getByName(SHEET_RULES)
+            last_row = max(used_row_count(sheet), 4)
+            for row in sheet.getCellRangeByPosition(4, 4, 4, last_row).getDataArray():
+                name = str(row[0]).strip()
+                if name and name not in names:
+                    names.append(name)
+        for transaction in self.read_transactions():
+            if transaction.category and transaction.category not in names:
+                names.append(transaction.category)
+        return names
+
+    def set_category_list(self, names):
+        """Rewrite the category list on the rules sheet."""
+        if not self.doc.Sheets.hasByName(SHEET_RULES):
+            return
+        sheet = self.doc.Sheets.getByName(SHEET_RULES)
+        last_row = max(used_row_count(sheet), 4 + len(names))
+        empty = tuple(("",) for _ in range(last_row - 4 + 1))
+        sheet.getCellRangeByPosition(4, 4, 4, last_row).setDataArray(empty)
+        if names:
+            sheet.getCellRangeByPosition(4, 4, 4, 4 + len(names) - 1).setDataArray(
+                tuple((name,) for name in names))
+
+    def uncategorised_groups(self):
+        """[(text, count, total, [(column, row), ...])] for uncategorised rows."""
+        groups = {}
+        order = []
+        for transaction in self.read_transactions():
+            category = (transaction.category or "").strip()
+            if category and category != DEFAULT_CATEGORY:
+                continue
+            entry = groups.get(transaction.text)
+            if entry is None:
+                entry = [transaction.text, 0, 0.0, []]
+                groups[transaction.text] = entry
+                order.append(entry)
+            entry[1] += 1
+            entry[2] += transaction.amount
+            column = COL_INC_CAT if transaction.income else COL_EXP_CAT
+            entry[3].append((column, transaction.source_row))
+        order.sort(key=lambda item: abs(item[2]), reverse=True)
+        return [tuple(entry) for entry in order]
+
+    def assign_category(self, cells, category):
+        """Write ``category`` into the given (column, row) cells."""
+        sheet = self.doc.Sheets.getByName(SHEET_TX)
+        for column, row in cells:
+            sheet.getCellByPosition(column, row).setString(category)
+
+    def rename_category(self, old, new):
+        """Rename a category everywhere it is used."""
+        if not old or not new or old == new:
+            return 0
+        changed = 0
+        sheet = self.doc.Sheets.getByName(SHEET_TX)
+        for transaction in self.read_transactions():
+            if transaction.category == old:
+                column = COL_INC_CAT if transaction.income else COL_EXP_CAT
+                sheet.getCellByPosition(column, transaction.source_row).setString(new)
+                changed += 1
+        if self.doc.Sheets.hasByName(SHEET_RULES):
+            rules_sheet = self.doc.Sheets.getByName(SHEET_RULES)
+            last_row = used_row_count(rules_sheet)
+            for row in range(4, last_row + 1):
+                cell = rules_sheet.getCellByPosition(2, row)
+                if cell.getString().strip() == old:
+                    cell.setString(new)
+        names = [new if name == old else name for name in self.category_list()]
+        self.set_category_list(_unique(names))
+        return changed
+
+    def delete_category(self, name):
+        """Remove a category; its transactions become uncategorised."""
+        changed = 0
+        sheet = self.doc.Sheets.getByName(SHEET_TX)
+        for transaction in self.read_transactions():
+            if transaction.category == name:
+                column = COL_INC_CAT if transaction.income else COL_EXP_CAT
+                sheet.getCellByPosition(
+                    column, transaction.source_row).setString(DEFAULT_CATEGORY)
+                changed += 1
+        if self.doc.Sheets.hasByName(SHEET_RULES):
+            rules_sheet = self.doc.Sheets.getByName(SHEET_RULES)
+            last_row = used_row_count(rules_sheet)
+            keep = []
+            for row in range(4, last_row + 1):
+                keyword = rules_sheet.getCellByPosition(1, row).getString().strip()
+                category = rules_sheet.getCellByPosition(2, row).getString().strip()
+                if keyword and category and category != name:
+                    keep.append((keyword, category))
+            self.set_rules(keep)
+        self.set_category_list([n for n in self.category_list() if n != name])
+        return changed
+
+    def set_rules(self, pairs):
+        """Replace the keyword table on the rules sheet."""
+        if not self.doc.Sheets.hasByName(SHEET_RULES):
+            return
+        sheet = self.doc.Sheets.getByName(SHEET_RULES)
+        last_row = max(used_row_count(sheet), 4 + len(pairs))
+        empty = tuple(("", "") for _ in range(last_row - 4 + 1))
+        sheet.getCellRangeByPosition(1, 4, 2, last_row).setDataArray(empty)
+        if pairs:
+            sheet.getCellRangeByPosition(1, 4, 2, 4 + len(pairs) - 1).setDataArray(
+                tuple((keyword, category) for keyword, category in pairs))
+
+    def add_rules(self, pairs):
+        """Append keyword rules, replacing any rule with the same keyword."""
+        existing = list(self.read_rules() or [])
+        lowered = dict((keyword.strip().lower(), index)
+                       for index, (keyword, _c) in enumerate(existing))
+        for keyword, category in pairs:
+            key = keyword.strip().lower()
+            if key in lowered:
+                existing[lowered[key]] = (keyword, category)
+            else:
+                existing.append((keyword, category))
+        self.set_rules(existing)
+        return existing
+
     # -- reading an existing document -------------------------------------
     def has_budget(self):
         return self.doc.Sheets.hasByName(SHEET_TX)
@@ -899,6 +1358,16 @@ class BudgetWorkbook(object):
                         planned.setdefault((kind, name), value)
         return planned
 
+    def read_forecast_start(self):
+        """The start balance the user typed on the forecast sheet, if any."""
+        if not self.doc.Sheets.hasByName(SHEET_FORECAST):
+            return None
+        try:
+            return self.doc.Sheets.getByName(SHEET_FORECAST) \
+                .getCellRangeByName("D5").getValue()
+        except Exception:
+            return None
+
     def read_start_balance(self):
         for index in range(self.doc.Sheets.Count):
             sheet = self.doc.Sheets.getByIndex(index)
@@ -938,12 +1407,24 @@ class BudgetWorkbook(object):
         """Recreate the summary sheets (and the month overview) in place."""
         summary = Summary(transactions)
         months = summary.months or [""]
+        targets = self.read_targets()
+        forecast_start = self.read_forecast_start()
         self.doc.lockControllers()
         try:
             for index in range(self.doc.Sheets.Count - 1, -1, -1):
                 name = self.doc.Sheets.getByIndex(index).Name
-                if name.startswith(SUMMARY_PREFIX) or name == SHEET_MONTHS:
+                if name.startswith(SUMMARY_PREFIX) or name in (SHEET_MONTHS,
+                                                               SHEET_PLAN,
+                                                               SHEET_FORECAST):
                     self.doc.Sheets.removeByName(name)
+
+            plan = build_plan(summary) if len(summary.months) > 1 else None
+            if plan is not None:
+                plan_rows = self.write_plan(self.sheet(SHEET_PLAN), plan, targets)
+                if forecast_start is None:
+                    forecast_start = (start_balance or 0.0) + summary.net
+                self.write_forecast(self.sheet(SHEET_FORECAST), plan, plan_rows,
+                                    forecast_start)
             previous = None
             for index, month in enumerate(months):
                 name = self.summary_name(months, month)
@@ -1047,6 +1528,26 @@ def read_sheet_as_table(doc, sheet):
 # ---------------------------------------------------------------------------
 # Column helpers
 # ---------------------------------------------------------------------------
+
+def _unique(names):
+    out = []
+    for name in names:
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _round_500(value):
+    return round(value / 500.0) * 500 if value else 0.0
+
+
+def _next_month(month_key):
+    """``"2025-12"`` -> ``date(2026, 1, 1)``."""
+    year, month = (int(part) for part in month_key.split("-"))
+    if month == 12:
+        return datetime.date(year + 1, 1, 1)
+    return datetime.date(year, month + 1, 1)
+
 
 def _col_name(index):
     """0 -> A, 1 -> B, ..."""

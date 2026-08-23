@@ -14,7 +14,7 @@ kolonner udvidelsen har fundet, og budgettet er der.
 | Mappe/fil | Hvad det er |
 |---|---|
 | `oxt/` | Selve udvidelsen (menu, dialoger, registrering) |
-| `budget_core/` | Motoren: CSV-genkendelse, tal/dato-parsing, kategorier, budget. Ren Python, ingen UNO |
+| `budget_core/` | Motoren: CSV-genkendelse, tal/dato-parsing, kategorier, budget og budgetforslag. Ren Python, ingen UNO |
 | `office/budget_office.py` | Skriver regnearket via UNO (ark, formler, formater) |
 | `budget_cli.py` | Samme motor som kommandolinjeværktøj (afløser for det oprindelige script) |
 | `build_oxt.py` | Bygger `dist/budget-fra-csv-1.0.0.oxt` |
@@ -44,16 +44,69 @@ Manager ▸ Tilføj**. Genstart LibreOffice bagefter — så ligger menuen
 
    | Ark | Indhold |
    |---|---|
+   | **Budgetforslag** | Et udkast til et fast månedsbudget ud fra hele perioden — faste, variable og periodiske udgifter hver for sig, med en Mål-kolonne du selv kan skrive i |
+   | **Prognose** | Saldoen 24 måneder frem, hvis alt fortsætter som nu — og hvis du rammer dine mål. Med graf |
    | **Oversigt** (ét pr. måned) | Budget / Faktisk / Diff. pr. kategori, startsaldo, slutsaldo og nøgletal — samme opsæt som skabelonen, bare i kroner |
    | **Transaktioner** | Udgifter i kolonne B:E, indtægter i G:J (Dato, Beløb, Beskrivelse, Kategori) |
    | **Alle måneder** | Kategorier × måneder med totaler og gennemsnit (kun når filen dækker flere måneder) |
    | **Kategorier** | Nøgleordene, der styrer den automatiske kategorisering |
+
+   *Budgetforslag og Prognose laves kun, når filen dækker mere end én måned.*
 
 4. Ret en kategori i **Transaktioner** (der er en rulleliste i
    kategori-kolonnen) — oversigten opdaterer sig selv, fordi "Faktisk" er
    `SUMIF`/`SUMIFS`-formler.
 5. Skriv dine egne budgettal i den lyserøde **Budget**-kolonne. Har filen
    flere måneder, er kolonnen udfyldt med gennemsnittet pr. måned som forslag.
+
+## Budgetforslag ud fra et helt år
+
+Giver du den en CSV med hele året, analyserer den hver kategori måned for
+måned og deler udgifterne i tre:
+
+| Gruppe | Hvornår | Forslaget bliver |
+|---|---|---|
+| **Faste udgifter** | Samme beløb næsten hver måned (husleje, forsikring, lån, telefon, abonnementer) | Gennemsnittet, rundet op |
+| **Variable udgifter** | Der hver måned, men beløbet svinger (dagligvarer, restaurant, transport, shopping) | Den **typiske** måned (median) — så én dyr december ikke sætter dagligvarebudgettet |
+| **Periodiske udgifter** | Få gange om året (el-afregning hvert kvartal, ferie, jul) | Årets samlede beløb delt ud på 12 — altså det du skal henlægge hver måned |
+
+Indtægten budgetteres forsigtigt: den typiske måned, ikke måneden med
+bonussen. Kvartalsvise indtægter (fx børneydelse) fordeles på månederne.
+
+Tabellen har seks talkolonner:
+
+`Gns./md` · `Typisk md` · `Laveste` · `Højeste` · **`Mål`** (din egen, lyserød) · `Forskel`
+
+**Forskel = Mål − Gns./md.** Sætter du dagligvarer til 4.000 kr. under dit
+nuværende forbrug, står der `-4.000 kr.` — så du kan se præcis hvad du skal
+finde. Nederst summeres det hele til **Til opsparing**, og du kan skrive et
+**opsparingsmål pr. måned**; linjen under viser, om målet hænger sammen.
+
+## Prognose
+
+Arket **Prognose** fremskriver saldoen 24 måneder ud fra din nuværende
+startsaldo (som du kan rette i den lyserøde celle), med to linjer i grafen:
+
+* **Saldo nu** — hvis alt fortsætter præcis som de sidste måneder.
+* **Saldo m. mål** — hvis du rammer tallene i Mål-kolonnen.
+
+Begge kolonner er formler, der peger på Budgetforslag, så grafen flytter sig,
+i samme øjeblik du ændrer et mål.
+
+## Kategorisering
+
+Tre måder, alt efter hvor meget du vil gøre:
+
+1. **Rullelisten i Transaktioner** — vælg kategori direkte i kolonnen
+   Kategori. Oversigterne opdaterer sig selv.
+2. **`Budget ▸ Kategorisér poster uden kategori…`** — en liste over alle
+   ukendte posteringer (samlet pr. forretning, med antal og beløb). Marker en
+   eller flere, vælg eller skriv en kategori, tryk **Tildel**. Sæt flueben i
+   "Gem som regel", så kender den forretningen næste gang.
+3. **`Budget ▸ Kategorier - opret, omdøb, slet…`** — opret en ny kategori,
+   omdøb en (posteringer, regler og lister følger med) eller slet en
+   (posteringerne bliver ukategoriserede igen, så du kan sætte dem et andet
+   sted hen). Alle ark bygges om bagefter.
 
 ### Når reglerne skal rettes
 
@@ -76,6 +129,10 @@ bevares. Reglerne gemmes samtidig i din brugerprofil
 
 * **Lav budget ud fra det aktive ark** — samme funktion, men på et ark der
   allerede er åbent. Brug den til `.xlsx`/`.ods`-filer: åbn dem i Calc først.
+* **Kategorisér poster uden kategori…** og **Kategorier - opret, omdøb, slet…**
+  (se ovenfor).
+* **Opdatér kategorier og budget** — kører reglerne igennem igen og bygger
+  alle oversigter, budgetforslaget og prognosen om.
 * **Vis kategoriregler** / **Nulstil kategoriregler**.
 
 ## Hvilke CSV-filer virker?
@@ -119,22 +176,26 @@ Der skrives `<navn>_kategoriseret.csv` (med kategori, type og måned) og
 ## Test
 
 ```bash
-python3 -m unittest discover -s tests      # 38 test, ingen LibreOffice nødvendig
+python3 -m unittest discover -s tests      # 51 test, ingen LibreOffice nødvendig
 
 # ende-til-ende mod en kørende LibreOffice:
 soffice --headless --norestore --accept="socket,host=localhost,port=2002;urp;" &
 python3 tests/office_smoke.py
 ```
 
-`tests/data/` indeholder eksempelfiler i otte forskellige CSV-varianter
+`tests/data/` indeholder eksempelfiler i ni forskellige CSV-varianter
 (Danske Bank-stil, Nordea med indledning, engelsk/amerikansk, hævet/indsat,
-UTF-16 med tabulator, uden overskrifter, `sep=`-linje og en rodet fil).
+UTF-16 med tabulator, uden overskrifter, `sep=`-linje, en rodet fil — og
+`aar_2024.csv` med et helt års posteringer, som budgetforslaget testes på).
 
 ## Kendte begrænsninger
 
-* Oversigtsarkene bygges helt om, når du vælger **Opdatér kategorier og
-  budget**. Budgettal, startsaldo og kategorinavne bevares — andre egne
-  ændringer på oversigtsarket gør ikke.
+* Oversigtsarkene, budgetforslaget og prognosen bygges helt om, når du vælger
+  **Opdatér kategorier og budget** (og efter kategoriændringer). Budgettal,
+  mål, opsparingsmål og startsaldoer bevares — andre egne ændringer på de ark
+  gør ikke.
+* Tallene i Budgetforslag er et øjebliksbillede af den importerede periode
+  (ikke formler). De genberegnes, når du opdaterer.
 * Formlerne kigger på række 5–5000 i `Transaktioner`; ved flere end ca. 5000
   posteringer skal området udvides (`TX_MAX_ROW` i `office/budget_office.py`).
 * Beløb behandles i kroner. Er der en valutakolonne med andre valutaer, læses

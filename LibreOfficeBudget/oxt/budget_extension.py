@@ -19,6 +19,7 @@ import traceback
 import uno
 import unohelper
 
+from com.sun.star.awt import XActionListener
 from com.sun.star.task import XJobExecutor
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,9 @@ class BudgetJob(unohelper.Base, XJobExecutor):
     def __init__(self, ctx):
         self.ctx = ctx
         self.smgr = ctx.ServiceManager
+        # UNO objects cannot hold Python attributes, so dialog listeners are
+        # kept alive here for as long as the job lives.
+        self._listeners = []
 
     # -- dispatch ---------------------------------------------------------
     def trigger(self, args):
@@ -71,6 +75,10 @@ class BudgetJob(unohelper.Base, XJobExecutor):
                 self.import_active_sheet()
             elif action in ("refresh", "recalc"):
                 self.refresh()
+            elif action == "assign":
+                self.assign_dialog()
+            elif action == "categories":
+                self.categories_dialog()
             elif action == "rules":
                 self.show_rules()
             elif action == "resetrules":
@@ -246,6 +254,268 @@ class BudgetJob(unohelper.Base, XJobExecutor):
                      "%d måned(er) i budgettet."
                      % (changed, len(summary.months)))
 
+    def _workbook(self):
+        """The BudgetWorkbook for the current document, or None."""
+        doc = self.desktop.getCurrentComponent()
+        if not doc or not hasattr(doc, "Sheets"):
+            self.message("Budget fra CSV", "Åbn budgettet først.")
+            return None
+        workbook = budget_office.BudgetWorkbook(doc)
+        if not workbook.has_budget():
+            self.message("Budget fra CSV",
+                         "Dette dokument indeholder ikke et ark ved navn "
+                         "\"%s\"." % budget_office.SHEET_TX)
+            return None
+        return workbook
+
+    def assign_dialog(self):
+        """Give the uncategorised transactions a category, a few clicks."""
+        workbook = self._workbook()
+        if workbook is None:
+            return
+        groups = workbook.uncategorised_groups()
+        if not groups:
+            self.message("Kategorisér poster",
+                         "Alle posteringer har allerede en kategori.")
+            return
+
+        categories = workbook.category_list()
+        state = {"groups": list(groups), "assigned": [], "rules": []}
+
+        model, dialog = self._assign_dialog_controls(state, categories)
+        try:
+            dialog.execute()
+        finally:
+            dialog.dispose()
+
+        if not state["assigned"]:
+            return
+        doc = workbook.doc
+        doc.lockControllers()
+        try:
+            for cells, category in state["assigned"]:
+                workbook.assign_category(cells, category)
+            if state["rules"]:
+                workbook.add_rules(state["rules"])
+            workbook.set_category_list(_merge(workbook.category_list(),
+                                              [c for _cells, c in state["assigned"]]))
+        finally:
+            doc.unlockControllers()
+        rows = workbook.read_rules()
+        if rows:
+            try:
+                RuleSet(rows).save(user_rules_path())
+            except Exception:
+                pass
+        workbook.rebuild()
+        self.message("Kategorisér poster",
+                     "%d posteringsgruppe(r) fik en kategori.\n"
+                     "%d ny(e) regel(er) blev gemt."
+                     % (len(state["assigned"]), len(state["rules"])))
+
+    def _assign_dialog_controls(self, state, categories):
+        model = self.create("com.sun.star.awt.UnoControlDialogModel")
+        model.Width, model.Height = 280, 196
+        model.Title = "Kategorisér poster"
+
+        def add(kind, name, x, y, w, h, **props):
+            control = model.createInstance("com.sun.star.awt.UnoControl%sModel"
+                                           % kind)
+            model.insertByName(name, control)
+            control.PositionX, control.PositionY = x, y
+            control.Width, control.Height = w, h
+            for key, value in props.items():
+                try:
+                    setattr(control, key, value)
+                except Exception:
+                    pass
+            return control
+
+        add("FixedText", "help", 6, 6, 268, 18,
+            Label="Vælg en eller flere poster, vælg eller skriv en kategori, "
+                  "og tryk Tildel. Teksten gemmes som regel, så den samme "
+                  "forretning kategoriseres automatisk næste gang.",
+            MultiLine=True)
+        listbox = add("ListBox", "items", 6, 28, 268, 104, MultiSelection=True)
+        listbox.StringItemList = tuple(_group_labels(state["groups"]))
+
+        add("FixedText", "l_cat", 6, 140, 40, 10, Label="Kategori:")
+        combo = add("ComboBox", "category", 48, 138, 130, 12, Dropdown=True,
+                    Text=categories[0] if categories else "")
+        combo.StringItemList = tuple(categories)
+        add("CheckBox", "rule", 48, 154, 226, 10, State=1,
+            Label="Gem som regel, så den bruges automatisk fremover")
+
+        add("Button", "assign", 184, 137, 44, 14, Label="Tildel")
+        add("Button", "close", 232, 137, 42, 14, Label="Luk", PushButtonType=1,
+            DefaultButton=True)
+        add("FixedText", "status", 6, 168, 268, 20, Label="", MultiLine=True)
+
+        dialog = self.create("com.sun.star.awt.UnoControlDialog")
+        dialog.setModel(model)
+        dialog.setVisible(False)
+        dialog.createPeer(self.create("com.sun.star.awt.Toolkit"), None)
+
+        def on_assign():
+            category = model.getByName("category").Text.strip()
+            selected = list(model.getByName("items").SelectedItems or ())
+            if not category or not selected:
+                model.getByName("status").Label = (
+                    "Vælg mindst én post og skriv en kategori.")
+                return
+            save_rule = bool(model.getByName("rule").State)
+            remaining = []
+            done = 0
+            for index, group in enumerate(state["groups"]):
+                if index in selected:
+                    text, _count, _total, cells = group
+                    state["assigned"].append((cells, category))
+                    if save_rule:
+                        state["rules"].append((text, category))
+                    done += 1
+                else:
+                    remaining.append(group)
+            state["groups"] = remaining
+            model.getByName("items").StringItemList = tuple(
+                _group_labels(remaining))
+            combo_model = model.getByName("category")
+            if category not in combo_model.StringItemList:
+                combo_model.StringItemList = tuple(
+                    list(combo_model.StringItemList) + [category])
+            model.getByName("status").Label = (
+                "%d gruppe(r) sat til \"%s\". %d tilbage."
+                % (done, category, len(remaining)))
+
+        listener = _ActionListener(on_assign)
+        dialog.getControl("assign").addActionListener(listener)
+        self._listeners.append(listener)
+        return model, dialog
+
+    def categories_dialog(self):
+        """Create, rename and delete categories."""
+        workbook = self._workbook()
+        if workbook is None:
+            return
+        state = {"names": workbook.category_list(), "dirty": False,
+                 "renames": [], "deletes": [], "adds": []}
+
+        model = self.create("com.sun.star.awt.UnoControlDialogModel")
+        model.Width, model.Height = 240, 190
+        model.Title = "Kategorier"
+
+        def add(kind, name, x, y, w, h, **props):
+            control = model.createInstance("com.sun.star.awt.UnoControl%sModel"
+                                           % kind)
+            model.insertByName(name, control)
+            control.PositionX, control.PositionY = x, y
+            control.Width, control.Height = w, h
+            for key, value in props.items():
+                try:
+                    setattr(control, key, value)
+                except Exception:
+                    pass
+            return control
+
+        add("FixedText", "help", 6, 6, 228, 18,
+            Label="Vælg en kategori for at omdøbe eller slette den, eller skriv "
+                  "et nyt navn og tryk Tilføj.", MultiLine=True)
+        listbox = add("ListBox", "names", 6, 26, 160, 120)
+        listbox.StringItemList = tuple(state["names"])
+        add("Edit", "name", 6, 150, 160, 12, Text="")
+        add("Button", "add", 172, 26, 62, 14, Label="Tilføj")
+        add("Button", "rename", 172, 44, 62, 14, Label="Omdøb")
+        add("Button", "delete", 172, 62, 62, 14, Label="Slet")
+        add("Button", "close", 172, 150, 62, 14, Label="Luk", PushButtonType=1,
+            DefaultButton=True)
+        add("FixedText", "status", 6, 166, 228, 18, Label="", MultiLine=True)
+
+        dialog = self.create("com.sun.star.awt.UnoControlDialog")
+        dialog.setModel(model)
+        dialog.setVisible(False)
+        dialog.createPeer(self.create("com.sun.star.awt.Toolkit"), None)
+
+        def selected_name():
+            items = model.getByName("names").SelectedItems
+            if items and 0 <= items[0] < len(state["names"]):
+                return state["names"][items[0]]
+            return ""
+
+        def refresh_list(status=""):
+            model.getByName("names").StringItemList = tuple(state["names"])
+            model.getByName("status").Label = status
+
+        def on_add():
+            name = model.getByName("name").Text.strip()
+            if not name:
+                refresh_list("Skriv et navn først.")
+                return
+            if name in state["names"]:
+                refresh_list("\"%s\" findes allerede." % name)
+                return
+            state["names"].append(name)
+            state["adds"].append(name)
+            state["dirty"] = True
+            model.getByName("name").Text = ""
+            refresh_list("Tilføjede \"%s\"." % name)
+
+        def on_rename():
+            old = selected_name()
+            new = model.getByName("name").Text.strip()
+            if not old or not new:
+                refresh_list("Vælg en kategori og skriv det nye navn.")
+                return
+            state["names"] = [new if n == old else n for n in state["names"]]
+            state["renames"].append((old, new))
+            state["dirty"] = True
+            model.getByName("name").Text = ""
+            refresh_list("Omdøbte \"%s\" til \"%s\"." % (old, new))
+
+        def on_delete():
+            name = selected_name()
+            if not name:
+                refresh_list("Vælg en kategori først.")
+                return
+            state["names"] = [n for n in state["names"] if n != name]
+            state["deletes"].append(name)
+            state["dirty"] = True
+            refresh_list("Sletter \"%s\" - posteringerne bliver "
+                         "ukategoriserede." % name)
+
+        for control_name, callback in (("add", on_add), ("rename", on_rename),
+                                       ("delete", on_delete)):
+            listener = _ActionListener(callback)
+            dialog.getControl(control_name).addActionListener(listener)
+            self._listeners.append(listener)
+
+        try:
+            dialog.execute()
+        finally:
+            dialog.dispose()
+
+        if not state["dirty"]:
+            return
+        doc = workbook.doc
+        doc.lockControllers()
+        try:
+            for old, new in state["renames"]:
+                workbook.rename_category(old, new)
+            for name in state["deletes"]:
+                workbook.delete_category(name)
+            workbook.set_category_list(state["names"])
+        finally:
+            doc.unlockControllers()
+        rows = workbook.read_rules()
+        if rows:
+            try:
+                RuleSet(rows).save(user_rules_path())
+            except Exception:
+                pass
+        workbook.rebuild()
+        self.message("Kategorier",
+                     "%d tilføjet, %d omdøbt, %d slettet."
+                     % (len(state["adds"]), len(state["renames"]),
+                        len(state["deletes"])))
+
     def show_rules(self):
         doc = self.desktop.getCurrentComponent()
         if not doc or not hasattr(doc, "Sheets"):
@@ -338,6 +608,32 @@ class BudgetJob(unohelper.Base, XJobExecutor):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+class _ActionListener(unohelper.Base, XActionListener):
+    """Runs a callback when a dialog button is pressed."""
+
+    def __init__(self, callback):
+        self.callback = callback
+
+    def actionPerformed(self, event):
+        self.callback()
+
+    def disposing(self, source):
+        pass
+
+
+def _group_labels(groups):
+    return ["%s   (%d stk., %.0f kr.)" % (text[:48], count, total)
+            for text, count, total, _cells in groups]
+
+
+def _merge(names, extra):
+    out = list(names)
+    for name in extra:
+        if name and name not in out:
+            out.append(name)
+    return out
+
 
 def _index(value):
     """Column index -> list box position (0 is "(ingen)")."""

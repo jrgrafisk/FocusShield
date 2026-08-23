@@ -166,6 +166,15 @@ DEFAULT_RULES: Tuple[Tuple[str, str], ...] = (
     ("valutatillæg", "Gebyrer og renter"), ("kortgebyr", "Gebyrer og renter"),
     ("betalingsservice", "Gebyrer og renter"), ("rykker", "Gebyrer og renter"),
 
+    # --- Lån og afdrag ---
+    ("afdrag", "Lån og afdrag"), ("billån", "Lån og afdrag"),
+    ("forbrugslån", "Lån og afdrag"), ("studielån", "Lån og afdrag"),
+    ("su-lån", "Lån og afdrag"), ("lånebetaling", "Lån og afdrag"),
+    ("santander", "Lån og afdrag"), ("ekspres bank", "Lån og afdrag"),
+    ("resurs bank", "Lån og afdrag"), ("basisbank", "Lån og afdrag"),
+    ("lendo", "Lån og afdrag"), ("sparxpres", "Lån og afdrag"),
+    ("kreditforening", "Lån og afdrag"),
+
     # --- Opsparing og investering ---
     ("opsparing", "Opsparing"), ("nordnet", "Opsparing"), ("saxo bank", "Opsparing"),
     ("aktier", "Opsparing"), ("investering", "Opsparing"), ("coinbase", "Opsparing"),
@@ -177,7 +186,9 @@ DEFAULT_RULES: Tuple[Tuple[str, str], ...] = (
     ("straksoverførsel", "Overførsel"), ("transfer", "Overførsel"),
 
     # --- Indtægter ---
-    ("løn", "Løn"), ("lønoverførsel", "Løn"), ("salary", "Løn"),
+    ("løn", "Løn"), ("lønoverførsel", "Løn"), ("løn overførsel", "Løn"),
+    ("lønudbetaling", "Løn"), ("løn udbetaling", "Løn"), ("salary", "Løn"),
+    ("månedsløn", "Løn"), ("a-conto løn", "Løn"),
     ("udbetaling danmark", "Offentlige ydelser"), ("su ", "Offentlige ydelser"),
     ("su-", "Offentlige ydelser"), ("børne- og ungeydelse", "Offentlige ydelser"),
     ("børnepenge", "Offentlige ydelser"), ("boligstøtte", "Offentlige ydelser"),

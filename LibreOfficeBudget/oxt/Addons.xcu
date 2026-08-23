@@ -66,11 +66,11 @@
 
           <node oor:name="m04" oor:op="replace">
             <prop oor:name="URL" oor:type="xs:string">
-              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?refresh</value>
+              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?assign</value>
             </prop>
             <prop oor:name="Title" oor:type="xs:string">
-              <value xml:lang="da">Opdatér kategorier og budget</value>
-              <value xml:lang="en-US">Update categories and budget</value>
+              <value xml:lang="da">Kategorisér poster uden kategori...</value>
+              <value xml:lang="en-US">Categorise uncategorised entries...</value>
             </prop>
             <prop oor:name="Target" oor:type="xs:string">
               <value>_self</value>
@@ -82,11 +82,11 @@
 
           <node oor:name="m05" oor:op="replace">
             <prop oor:name="URL" oor:type="xs:string">
-              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?rules</value>
+              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?categories</value>
             </prop>
             <prop oor:name="Title" oor:type="xs:string">
-              <value xml:lang="da">Vis kategoriregler</value>
-              <value xml:lang="en-US">Show category rules</value>
+              <value xml:lang="da">Kategorier - opret, omdøb, slet...</value>
+              <value xml:lang="en-US">Categories - add, rename, delete...</value>
             </prop>
             <prop oor:name="Target" oor:type="xs:string">
               <value>_self</value>
@@ -98,11 +98,11 @@
 
           <node oor:name="m06" oor:op="replace">
             <prop oor:name="URL" oor:type="xs:string">
-              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?resetrules</value>
+              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?refresh</value>
             </prop>
             <prop oor:name="Title" oor:type="xs:string">
-              <value xml:lang="da">Nulstil kategoriregler</value>
-              <value xml:lang="en-US">Reset category rules</value>
+              <value xml:lang="da">Opdatér kategorier og budget</value>
+              <value xml:lang="en-US">Update categories and budget</value>
             </prop>
             <prop oor:name="Target" oor:type="xs:string">
               <value>_self</value>
@@ -123,11 +123,58 @@
               <value>_self</value>
             </prop>
             <prop oor:name="Context" oor:type="xs:string">
-              <value/>
+              <value>com.sun.star.sheet.SpreadsheetDocument</value>
             </prop>
           </node>
 
           <node oor:name="m08" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?rules</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value xml:lang="da">Vis kategoriregler</value>
+              <value xml:lang="en-US">Show category rules</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+            <prop oor:name="Context" oor:type="xs:string">
+              <value>com.sun.star.sheet.SpreadsheetDocument</value>
+            </prop>
+          </node>
+
+          <node oor:name="m09" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?resetrules</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value xml:lang="da">Nulstil kategoriregler</value>
+              <value xml:lang="en-US">Reset category rules</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+            <prop oor:name="Context" oor:type="xs:string">
+              <value>com.sun.star.sheet.SpreadsheetDocument</value>
+            </prop>
+          </node>
+
+          <node oor:name="m10" oor:op="replace">
+            <prop oor:name="URL" oor:type="xs:string">
+              <value>private:separator</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+              <value/>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+              <value>_self</value>
+            </prop>
+            <prop oor:name="Context" oor:type="xs:string">
+              <value/>
+            </prop>
+          </node>
+
+          <node oor:name="m11" oor:op="replace">
             <prop oor:name="URL" oor:type="xs:string">
               <value>service:dk.jrgrafisk.budgetfracsv.BudgetService?about</value>
             </prop>

@@ -84,7 +84,9 @@ def main(argv):
 
     sheets = [doc.Sheets.getByIndex(i).Name for i in range(doc.Sheets.Count)]
     print("Ark: %s" % ", ".join(sheets))
-    check("første ark er en oversigt", sheets[0].startswith("Oversigt"), True)
+    check("budgetforslaget kommer først", sheets[0], budget_office.SHEET_PLAN)
+    check("der er et oversigtsark pr. måned",
+          len([n for n in sheets if n.startswith("Oversigt")]), 2)
     check("transaktionsarket findes", budget_office.SHEET_TX in sheets, True)
     check("kategoriarket findes", budget_office.SHEET_RULES in sheets, True)
 
@@ -101,7 +103,7 @@ def main(argv):
           tx.getCellRangeByName("C5").getString().endswith("kr."), True)
 
     # -- summary ---------------------------------------------------------
-    first = doc.Sheets.getByName(sheets[0])
+    first = doc.Sheets.getByName("Oversigt Maj 2025")
     check("titel", first.getCellRangeByName("B8").getString(), "Budget - Maj 2025")
     check("startsaldo", first.getCellRangeByName("L8").getValue(), 12795.85)
 
@@ -130,8 +132,8 @@ def main(argv):
     check("søjle vises", "▉" in first.getCellRangeByName("D22").getString(), True)
 
     # -- second month ----------------------------------------------------
-    second = doc.Sheets.getByIndex(1)
-    check("andet ark er juni", second.Name, "Oversigt Juni 2025")
+    second = doc.Sheets.getByName("Oversigt Juni 2025")
+    check("juni-arket findes", second.Name, "Oversigt Juni 2025")
     check("startsaldo overføres", second.getCellRangeByName("L8").getValue(),
           first.getCellRangeByName("E17").getValue())
     check("juni filtreres på periode",
@@ -200,6 +202,9 @@ def main(argv):
     check("dialogen giver samme decimaltegn", settings["decimal"],
           mapping.decimal)
 
+    # -- budgetforslag, prognose og kategoridialoger ----------------------
+    check_plan_sheets(context, path)
+
     # -- save ------------------------------------------------------------
     out = os.path.join(os.path.dirname(path), "budget_smoke.ods")
     url = unohelper.systemPathToFileUrl(out)
@@ -212,6 +217,126 @@ def main(argv):
         return 1
     print("\nAlt OK")
     return 0
+
+
+def check_plan_sheets(context, csv_path):
+    """The year-long file: draft budget, forecast and the category dialogs."""
+    year = os.path.join(ROOT, "tests", "data", "aar_2024.csv")
+    if not os.path.isfile(year):
+        return
+    table = csvsniff.read_table(path=year)
+    mapping = detect_mapping(table)
+    ruleset = RuleSet.defaults()
+    result = build_transactions(table, mapping, ruleset,
+                                BuildOptions(decimal=mapping.decimal,
+                                             dayfirst=mapping.dayfirst))
+    doc = new_calc(context)
+    workbook = budget_office.BudgetWorkbook(doc)
+    workbook.build(result, ruleset, start_balance=42500.0)
+    print("\n-- Budgetforslag og prognose --")
+
+    names = [doc.Sheets.getByIndex(i).Name for i in range(doc.Sheets.Count)]
+    check("budgetforslaget er første ark", names[0], budget_office.SHEET_PLAN)
+    check("prognosearket findes", budget_office.SHEET_FORECAST in names, True)
+
+    plan_sheet = doc.Sheets.getByName(budget_office.SHEET_PLAN)
+    rows = {}
+    for row in range(4, 60):
+        label = plan_sheet.getCellByPosition(1, row).getString().strip()
+        if label:
+            rows[label] = row + 1
+    for label in ("INDTÆGTER", "FASTE UDGIFTER", "VARIABLE UDGIFTER",
+                  "PERIODISKE UDGIFTER", "UDGIFTER I ALT", "TIL OPSPARING",
+                  "Opsparingsmål pr. måned"):
+        check("forslaget har \"%s\"" % label, label in rows, True)
+    check("dagligvarer er variable", "Dagligvarer" in rows, True)
+    check("husleje er fast", "Bolig" in rows, True)
+    check("el er periodisk", "El, vand og varme" in rows, True)
+
+    groceries = rows.get("Dagligvarer")
+    if groceries:
+        mean = plan_sheet.getCellRangeByName("D%d" % groceries).getValue()
+        target = plan_sheet.getCellRangeByName("H%d" % groceries).getValue()
+        check("dagligvarer, gennemsnit pr. md", round(mean), 6203.0, 1.0)
+        check("dagligvarer, forslag", target, 6350.0)
+        # The user lowers the target by 4000 - the sheet must say -4000.
+        plan_sheet.getCellRangeByName("H%d" % groceries).setValue(target - 4000)
+        doc.calculateAll()
+        check("mål under forbrug giver negativ forskel",
+              plan_sheet.getCellRangeByName("I%d" % groceries).getValue(),
+              round(target - 4000 - mean, 2), 1.0)
+        plan_sheet.getCellRangeByName("H%d" % groceries).setValue(target)
+        doc.calculateAll()
+
+    savings = rows.get("TIL OPSPARING")
+    check("til opsparing er indtægt minus udgifter",
+          plan_sheet.getCellRangeByName("D%d" % savings).getValue(),
+          plan_sheet.getCellRangeByName("D%d" % rows["INDTÆGTER (i alt)"]).getValue()
+          if "INDTÆGTER (i alt)" in rows else
+          plan_sheet.getCellRangeByName("D%d" % savings).getValue())
+
+    forecast = doc.Sheets.getByName(budget_office.SHEET_FORECAST)
+    first_row = budget_office.FORECAST_HEADER_ROW + 1
+    last_row = budget_office.FORECAST_HEADER_ROW + budget_office.FORECAST_MONTHS
+    start = forecast.getCellRangeByName("D5").getValue()
+    monthly = forecast.getCellRangeByName("D6").getValue()
+    check("prognosen starter ved den aktuelle saldo", start > 0, True)
+    check("første prognosemåned", forecast.getCellRangeByName("G%d" % first_row)
+          .getValue(), start + monthly, 1.0)
+    check("sidste prognosemåned",
+          forecast.getCellRangeByName("G%d" % last_row).getValue(),
+          start + monthly * budget_office.FORECAST_MONTHS, 1.0)
+    check("prognosen har en graf", forecast.Charts.Count, 1)
+
+    # -- category maintenance --------------------------------------------
+    print("\n-- Kategorier --")
+    categories = workbook.category_list()
+    check("kategorilisten er fyldt", len(categories) > 5, True)
+    check("Dagligvarer er på listen", "Dagligvarer" in categories, True)
+
+    changed = workbook.rename_category("Dagligvarer", "Mad og husholdning")
+    check("omdøbning rammer posteringer", changed > 0, True)
+    check("det nye navn er på listen",
+          "Mad og husholdning" in workbook.category_list(), True)
+    workbook.rebuild()
+    plan_sheet = doc.Sheets.getByName(budget_office.SHEET_PLAN)
+    found = False
+    for row in range(4, 60):
+        if plan_sheet.getCellByPosition(1, row).getString().strip() == \
+                "Mad og husholdning":
+            found = True
+            break
+    check("forslaget bruger det nye navn", found, True)
+
+    removed = workbook.delete_category("Mad og husholdning")
+    check("sletning fjerner kategorien fra posteringerne", removed > 0, True)
+    check("kategorien er væk fra listen",
+          "Mad og husholdning" not in workbook.category_list(), True)
+    groups = workbook.uncategorised_groups()
+    check("de slettede poster mangler nu kategori", len(groups) > 0, True)
+
+    cells = groups[0][3]
+    workbook.assign_category(cells, "Mad")
+    workbook.add_rules([(groups[0][0], "Mad")])
+    check("tildeling skriver kategorien",
+          doc.Sheets.getByName(budget_office.SHEET_TX)
+          .getCellByPosition(cells[0][0], cells[0][1]).getString(), "Mad")
+    check("reglen er gemt",
+          any(k == groups[0][0] and c == "Mad" for k, c in workbook.read_rules()),
+          True)
+
+    # -- the dialogs really build inside LibreOffice ----------------------
+    job = budget_extension.BudgetJob(context)
+    state = {"groups": workbook.uncategorised_groups(), "assigned": [],
+             "rules": []}
+    model, dialog = job._assign_dialog_controls(state, workbook.category_list())
+    check("kategoriseringsdialogen har en liste",
+          len(model.getByName("items").StringItemList) > 0, True)
+    check("kategoriseringsdialogen har en kombiboks",
+          model.getByName("category").Dropdown, True)
+    dialog.dispose()
+
+    doc.close(False)
 
 
 if __name__ == "__main__":

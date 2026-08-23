@@ -136,6 +136,18 @@ Tre måder, alt efter hvor meget du vil gøre:
    Marker en eller flere, vælg eller skriv en kategori, tryk **Tildel**. Sæt
    flueben i "Gem som regel", så virker den med det samme på *alle*
    posteringer, der matcher — ikke kun dem du lige markerede.
+
+   Tryk **Ignorér** i stedet for at markere en postering som ligegyldig for
+   budgettet — fx en overførsel mellem dine egne konti, en refusion der
+   ellers ville tælle et køb dobbelt, eller en teststøvsning. Den sættes til
+   kategorien **Ignoreret**, som altid er tilgængelig (også i rullelisten i
+   Transaktioner). Ignorerede posteringer:
+   * tæller hverken som indtægt eller udgift noget sted (Oversigt,
+     Budgetforslag, Alle måneder, Bankbudget),
+   * forsvinder fra "poster uden kategori" ligesom enhver anden kategori,
+   * bliver stående i **Transaktioner**, vist nedtonet i kursiv, så du kan se
+     dem og fortryde — vælg bare en anden kategori i rullelisten og kør
+     **Opdatér kategorier og budget**.
 3. **`Budget ▸ Kategorier - opret, omdøb, slet…`** — opret en ny kategori,
    omdøb en (posteringer, regler og lister følger med) eller slet en
    (posteringerne bliver ukategoriserede igen, så du kan sætte dem et andet
@@ -227,7 +239,7 @@ Der skrives `<navn>_kategoriseret.csv` (med kategori, type og måned) og
 ## Test
 
 ```bash
-python3 -m unittest discover -s tests      # 63 test, ingen LibreOffice nødvendig
+python3 -m unittest discover -s tests      # 68 test, ingen LibreOffice nødvendig
 
 # ende-til-ende mod en kørende LibreOffice:
 soffice --headless --norestore --accept="socket,host=localhost,port=2002;urp;" &

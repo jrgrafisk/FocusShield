@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from .merchant import merchant_key, merchant_name, rule_keyword
 from .parsing import month_key, month_label, parse_amount, parse_date
-from .rules import DEFAULT_CATEGORY, RuleSet
+from .rules import DEFAULT_CATEGORY, IGNORED_CATEGORY, RuleSet
 from .textutils import squeeze
 
 __all__ = ["Transaction", "BuildOptions", "BuildResult", "Summary",
@@ -99,6 +99,11 @@ class BuildResult(object):
                             if t.category == DEFAULT_CATEGORY)
         if uncategorised:
             lines.append("%d postering(er) er ikke kategoriseret." % uncategorised)
+        ignored = sum(1 for t in self.transactions
+                     if t.category == IGNORED_CATEGORY)
+        if ignored:
+            lines.append("%d postering(er) er markeret som ignoreret og "
+                         "tæller ikke med i budgettet." % ignored)
         return lines + list(self.warnings)
 
 
@@ -222,16 +227,18 @@ class Summary(object):
     """Monthly totals per category - the actual budget."""
 
     def __init__(self, transactions: Sequence[Transaction]):
-        self.months: List[str] = sorted({t.month for t in transactions})
+        counted = [t for t in transactions if t.category != IGNORED_CATEGORY]
+        self.months: List[str] = sorted({t.month for t in counted})
         self.cells: Dict[Tuple[str, str, str], float] = {}
         self.counts: Counter = Counter()
-        for t in transactions:
+        for t in counted:
             key = (t.kind, t.category, t.month)
             self.cells[key] = self.cells.get(key, 0.0) + t.amount
             self.counts[(t.kind, t.category)] += 1
         self.expense_categories = self._categories(KIND_EXPENSE)
         self.income_categories = self._categories(KIND_INCOME)
-        self.transaction_count = len(transactions)
+        self.transaction_count = len(counted)
+        self.ignored_count = len(transactions) - len(counted)
 
     def _categories(self, kind: str) -> List[str]:
         totals: Dict[str, float] = {}

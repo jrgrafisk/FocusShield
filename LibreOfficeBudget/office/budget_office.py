@@ -23,7 +23,7 @@ from budget_core.merchant import merchant_key, merchant_name, rule_keyword
 from budget_core.parsing import MONTH_NAMES_DA
 from budget_core.plan import (GROUP_FIXED, GROUP_HELP, GROUP_LABELS,
                               GROUP_PERIODIC, GROUP_VARIABLE, build_plan)
-from budget_core.rules import DEFAULT_CATEGORY
+from budget_core.rules import DEFAULT_CATEGORY, IGNORED_CATEGORY
 from budget_core.textutils import fold
 
 # ---------------------------------------------------------------------------
@@ -464,11 +464,23 @@ class BudgetWorkbook(object):
                       size=10, color=TEXT_GREY, bold=True, align="left")
             pen.style(text_ref, font=FONT_BODY, size=10, color=TEXT_GREY,
                       align="left")
+        self._dim_ignored_rows(pen, expenses, COL_EXP_DATE)
+        self._dim_ignored_rows(pen, income, COL_INC_DATE)
 
         self._add_category_dropdown(sheet, COL_EXP_CAT, last)
         self._add_category_dropdown(sheet, COL_INC_CAT, last)
         self._print_setup(sheet, COL_INC_CAT, last)
         self._freeze(sheet, 0, TX_FIRST_ROW)
+
+    def _dim_ignored_rows(self, pen, transactions, first_col):
+        """Grey out rows marked "Ignoreret", so it is obvious at a glance
+        they are not part of any total - without hiding them."""
+        for offset, t in enumerate(transactions):
+            if t.category != IGNORED_CATEGORY:
+                continue
+            row = TX_FIRST_ROW + offset
+            ref = _ref(first_col, row + 1, first_col + 3, row + 1)
+            pen.style(ref, color=MUTED, italic=True)
 
     def _write_block(self, sheet, transactions, first_col):
         if not transactions:
@@ -1723,12 +1735,29 @@ class BudgetWorkbook(object):
                                             transaction.source_row).setString(category)
                     transaction.category = category
                     changed += 1
+            self._apply_ignored_styling(sheet, transactions)
         finally:
             self.doc.unlockControllers()
         planned = self.read_planned()
         start_balance = self.read_start_balance()
         summary = self.rebuild_summaries(transactions, planned, start_balance)
         return summary, changed
+
+    def _apply_ignored_styling(self, sheet, transactions):
+        """Keep the italic/muted "ignoreret" look in sync with the category -
+        a transaction can be un-ignored again by changing its category."""
+        pen = self.pen(sheet)
+        for t in transactions:
+            first_col = COL_INC_DATE if t.income else COL_EXP_DATE
+            row = t.source_row + 1
+            if t.category == IGNORED_CATEGORY:
+                pen.style(_ref(first_col, row, first_col + 3, row),
+                         color=MUTED, italic=True)
+            else:
+                pen.style(_ref(first_col, row, first_col, row),
+                         color=MUTED, italic=False)
+                pen.style(_ref(first_col + 1, row, first_col + 3, row),
+                         color=TEXT_GREY, italic=False)
 
     def rebuild_summaries(self, transactions, planned, start_balance):
         """Recreate the summary sheets (and the month overview) in place."""

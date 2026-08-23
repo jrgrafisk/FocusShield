@@ -33,7 +33,7 @@ from budget_core import csvsniff  # noqa: E402
 from budget_core.budget import (BuildOptions, KIND_EXPENSE,  # noqa: E402
                                 build_transactions)
 from budget_core.columns import detect_mapping  # noqa: E402
-from budget_core.rules import RuleSet  # noqa: E402
+from budget_core.rules import IGNORED_CATEGORY, RuleSet  # noqa: E402
 
 FAILURES = []
 
@@ -385,6 +385,65 @@ def check_plan_sheets(context, csv_path):
           any("Festival" in g[0] for g in festival_workbook.uncategorised_groups()),
           False)
     festival_doc.close(False)
+
+    # -- ignoring a posting during categorisation --------------------------
+    ignore_table = csvsniff.Table.from_rows([
+        ["Dato", "Tekst", "Beløb"],
+        ["01-05-2025", "Netto Amager", "-345,60"],
+        ["02-05-2025", "Flyt til S-konto", "-5000,00"],
+        ["03-05-2025", "Flyt til S-konto", "-3000,00"],
+        ["04-05-2025", "Løn maj", "28000,00"],
+        ["04-06-2025", "Løn juni", "28000,00"],
+    ])
+    ignore_mapping = detect_mapping(ignore_table)
+    ignore_result = build_transactions(
+        ignore_table, ignore_mapping, RuleSet.defaults(),
+        BuildOptions(decimal=ignore_mapping.decimal,
+                    dayfirst=ignore_mapping.dayfirst))
+    ignore_doc = new_calc(context)
+    ignore_workbook = budget_office.BudgetWorkbook(ignore_doc)
+    ignore_workbook.build(ignore_result, RuleSet.defaults(), start_balance=10000.0)
+
+    ignore_rules_sheet = ignore_doc.Sheets.getByName(budget_office.SHEET_RULES)
+    ignore_last = budget_office.used_row_count(ignore_rules_sheet)
+    ignore_cats = [ignore_rules_sheet.getCellByPosition(4, r).getString()
+                   for r in range(4, ignore_last + 1)]
+    check("Ignoreret er altid tilgængelig som kategori",
+          IGNORED_CATEGORY in ignore_cats, True)
+
+    transfer_group = next(g for g in ignore_workbook.uncategorised_groups()
+                          if "konto" in g[0].lower())
+    check("overførsel-gruppen har 2 posteringer", transfer_group[1], 2)
+    ignore_state = {
+        "assigned": [(transfer_group[3], IGNORED_CATEGORY)],
+        "rules": [(transfer_group[4], IGNORED_CATEGORY)],
+    }
+    _assigned, ignore_rules_saved, _changed = job.commit_assignments(
+        ignore_workbook, ignore_state)
+    check("ignorér-reglen blev gemt", ignore_rules_saved, 1)
+
+    ignore_summary = budget_office.Summary(ignore_workbook.read_transactions())
+    check("ignorerede tæller ikke som udgift",
+          IGNORED_CATEGORY in ignore_summary.expense_categories, False)
+    check("2 posteringer ignoreret, 3 tæller stadig med",
+          (ignore_summary.ignored_count, ignore_summary.transaction_count), (2, 3))
+
+    ignore_tx = ignore_doc.Sheets.getByName(budget_office.SHEET_TX)
+    dimmed = 0
+    for row in range(budget_office.TX_FIRST_ROW, budget_office.TX_FIRST_ROW + 4):
+        cat_cell = ignore_tx.getCellByPosition(budget_office.COL_EXP_CAT, row)
+        if cat_cell.getString() == IGNORED_CATEGORY:
+            text_cell = ignore_tx.getCellByPosition(budget_office.COL_EXP_TEXT, row)
+            if text_cell.CharPosture.value == "ITALIC":
+                dimmed += 1
+    check("begge ignorerede rækker er vist nedtonet", dimmed, 2)
+
+    ignore_plan = ignore_doc.Sheets.getByName(budget_office.SHEET_PLAN)
+    on_plan = any(
+        ignore_plan.getCellByPosition(1, row).getString().strip() == IGNORED_CATEGORY
+        for row in range(4, 60))
+    check("Ignoreret optræder ikke i Budgetforslag", on_plan, False)
+    ignore_doc.close(False)
 
     doc.close(False)
 

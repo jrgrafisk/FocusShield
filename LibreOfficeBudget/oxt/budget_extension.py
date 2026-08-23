@@ -43,7 +43,8 @@ from budget_core.budget import (BuildOptions, SIGN_AUTO,            # noqa: E402
                                 SIGN_POSITIVE_IS_EXPENSE,
                                 build_transactions)
 from budget_core.parsing import parse_amount                        # noqa: E402
-from budget_core.rules import RuleSet, user_rules_path              # noqa: E402
+from budget_core.rules import (IGNORED_CATEGORY, RuleSet,           # noqa: E402
+                               user_rules_path)
 import budget_office                                                # noqa: E402
 
 IMPLEMENTATION_NAME = "dk.jrgrafisk.budgetfracsv.BudgetJob"
@@ -333,7 +334,7 @@ class BudgetJob(unohelper.Base, XJobExecutor):
 
     def _assign_dialog_controls(self, state, categories):
         model = self.create("com.sun.star.awt.UnoControlDialogModel")
-        model.Width, model.Height = 300, 218
+        model.Width, model.Height = 300, 232
         model.Title = "Kategorisér poster"
 
         def add(kind, name, x, y, w, h, **props):
@@ -352,7 +353,9 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         add("FixedText", "help", 6, 6, 288, 20,
             Label="Posterne er samlet pr. forretning - beløb, datoer og "
                   "notanumre i teksten ignoreres. Vælg en eller flere, vælg "
-                  "eller skriv en kategori, og tryk Tildel.",
+                  "eller skriv en kategori, og tryk Tildel - eller tryk "
+                  "Ignorér for poster der ikke skal tælle med i budgettet "
+                  "(fx overførsler mellem egne konti).",
             MultiLine=True)
         listbox = add("ListBox", "items", 6, 30, 288, 112, MultiSelection=True)
         listbox.StringItemList = tuple(_group_labels(state["groups"]))
@@ -361,9 +364,8 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         combo = add("ComboBox", "category", 52, 146, 140, 12, Dropdown=True,
                     LineCount=20, Text=categories[0] if categories else "")
         combo.StringItemList = tuple(categories)
-        add("Button", "assign", 198, 145, 46, 14, Label="Tildel")
-        add("Button", "close", 248, 145, 46, 14, Label="Luk", PushButtonType=1,
-            DefaultButton=True)
+        add("Button", "assign", 198, 145, 44, 14, Label="Tildel")
+        add("Button", "ignore", 246, 145, 48, 14, Label="Ignorér")
 
         add("FixedText", "l_rule", 6, 166, 44, 10, Label="Regel:")
         add("Edit", "keyword", 52, 164, 140, 12,
@@ -371,7 +373,9 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         add("FixedText", "rule_hint", 198, 166, 96, 10, Label="(tom = per post)")
         add("CheckBox", "rule", 52, 180, 242, 10, State=1,
             Label="Gem som regel, så forretningen kendes næste gang")
-        add("FixedText", "status", 6, 194, 288, 20, Label="", MultiLine=True)
+        add("FixedText", "status", 6, 198, 236, 26, Label="", MultiLine=True)
+        add("Button", "close", 248, 198, 46, 14, Label="Luk", PushButtonType=1,
+            DefaultButton=True)
 
         dialog = self.create("com.sun.star.awt.UnoControlDialog")
         dialog.setModel(model)
@@ -389,12 +393,10 @@ class BudgetJob(unohelper.Base, XJobExecutor):
             elif len(selected) > 1:
                 model.getByName("keyword").Text = ""
 
-        def on_assign():
-            category = model.getByName("category").Text.strip()
+        def apply_category(category, add_to_dropdown):
             selected = selected_indexes()
-            if not category or not selected:
-                model.getByName("status").Label = (
-                    "Vælg mindst én post og skriv en kategori.")
+            if not selected:
+                model.getByName("status").Label = "Vælg mindst én post først."
                 return
             save_rule = bool(model.getByName("rule").State)
             override = model.getByName("keyword").Text.strip()
@@ -412,18 +414,33 @@ class BudgetJob(unohelper.Base, XJobExecutor):
             state["groups"] = remaining
             model.getByName("items").StringItemList = tuple(
                 _group_labels(remaining))
-            combo_model = model.getByName("category")
-            if category not in combo_model.StringItemList:
-                combo_model.StringItemList = tuple(
-                    list(combo_model.StringItemList) + [category])
+            if add_to_dropdown:
+                combo_model = model.getByName("category")
+                if category not in combo_model.StringItemList:
+                    combo_model.StringItemList = tuple(
+                        list(combo_model.StringItemList) + [category])
             model.getByName("keyword").Text = ""
             model.getByName("status").Label = (
                 "%d gruppe(r) sat til \"%s\". %d tilbage."
                 % (done, category, len(remaining)))
 
+        def on_assign():
+            category = model.getByName("category").Text.strip()
+            if not category:
+                model.getByName("status").Label = (
+                    "Skriv eller vælg en kategori.")
+                return
+            apply_category(category, add_to_dropdown=True)
+
+        def on_ignore():
+            apply_category(IGNORED_CATEGORY, add_to_dropdown=False)
+
         listener = _ActionListener(on_assign)
         dialog.getControl("assign").addActionListener(listener)
         self._listeners.append(listener)
+        ignore_listener = _ActionListener(on_ignore)
+        dialog.getControl("ignore").addActionListener(ignore_listener)
+        self._listeners.append(ignore_listener)
         selection = _ItemListener(on_select)
         try:
             dialog.getControl("items").addItemListener(selection)

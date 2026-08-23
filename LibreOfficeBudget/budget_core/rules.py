@@ -15,10 +15,16 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .textutils import fold
 
-__all__ = ["RuleSet", "DEFAULT_RULES", "DEFAULT_CATEGORY", "INCOME_CATEGORIES",
-           "default_categories", "user_rules_path"]
+__all__ = ["RuleSet", "DEFAULT_RULES", "DEFAULT_CATEGORY", "IGNORED_CATEGORY",
+           "INCOME_CATEGORIES", "default_categories", "user_rules_path"]
 
 DEFAULT_CATEGORY = "Ukategoriseret"
+
+# A posting set to this category counts towards nothing: not an expense, not
+# an income, not "uncategorised" either.  For internal transfers, refunds
+# that would otherwise double up a purchase, test postings and the like -
+# things a budget should simply not see.
+IGNORED_CATEGORY = "Ignoreret"
 
 # Keywords this short (or shorter) only match whole words.
 SHORT_KEYWORD = 4
@@ -207,7 +213,11 @@ def default_categories() -> List[str]:
             seen.append(category)
     expenses = sorted(c for c in seen if c not in INCOME_CATEGORIES)
     income = [c for c in INCOME_CATEGORIES if c in seen]
-    return expenses + income + [DEFAULT_CATEGORY]
+    result = expenses + income
+    for special in (DEFAULT_CATEGORY, IGNORED_CATEGORY):
+        if special not in result:
+            result.append(special)
+    return result
 
 
 class RuleSet(object):
@@ -336,7 +346,11 @@ class RuleSet(object):
                 out.append(category)
         expenses = sorted(c for c in out if c not in INCOME_CATEGORIES)
         income = [c for c in INCOME_CATEGORIES if c in out]
-        return expenses + income + [self.default]
+        result = expenses + income
+        for special in (self.default, IGNORED_CATEGORY):
+            if special not in result:
+                result.append(special)
+        return result
 
     def __len__(self) -> int:
         return len(self._rules)

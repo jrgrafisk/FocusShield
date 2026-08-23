@@ -23,7 +23,8 @@ from budget_core.parsing import (detect_dayfirst, detect_decimal_separator,
 from budget_core.merchant import merchant_key, merchant_name, rule_keyword
 from budget_core.plan import (GROUP_FIXED, GROUP_PERIODIC, GROUP_VARIABLE,
                               build_plan)
-from budget_core.rules import DEFAULT_CATEGORY, RuleSet
+from budget_core.rules import (DEFAULT_CATEGORY, IGNORED_CATEGORY, RuleSet,
+                               default_categories)
 from budget_core.textutils import fold
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -291,6 +292,47 @@ class SummaryTests(unittest.TestCase):
                   for c in summary.expense_categories]
         self.assertEqual(totals, sorted(totals, reverse=True))
 
+    def test_ignored_postings_do_not_count(self):
+        """A posting set to "Ignoreret" must vanish from every total, but
+        stay out of the way rather than raise or get silently dropped."""
+        table = csvsniff.Table.from_rows([
+            ["Dato", "Tekst", "Beløb"],
+            ["01-05-2025", "Netto", "-200,00"],
+            ["02-05-2025", "Overførsel til opsparing", "-5000,00"],
+            ["03-05-2025", "Løn", "20000,00"],
+        ])
+        mapping = detect_mapping(table)
+        transactions = build_transactions(table, mapping, RuleSet.defaults(),
+                                          BuildOptions(decimal=",")).transactions
+        for t in transactions:
+            if t.text == "Overførsel til opsparing":
+                t.category = IGNORED_CATEGORY
+        summary = summarise(transactions)
+
+        self.assertNotIn(IGNORED_CATEGORY, summary.expense_categories)
+        self.assertNotIn(IGNORED_CATEGORY, summary.income_categories)
+        self.assertAlmostEqual(summary.total(KIND_EXPENSE), -200.0)
+        self.assertAlmostEqual(summary.total(KIND_INCOME), 20000.0)
+        self.assertAlmostEqual(summary.net, 19800.0)
+        self.assertEqual(summary.transaction_count, 2)
+        self.assertEqual(summary.ignored_count, 1)
+
+    def test_ignored_only_month_drops_out(self):
+        """A month with nothing but ignored postings is not a real month."""
+        table = csvsniff.Table.from_rows([
+            ["Dato", "Tekst", "Beløb"],
+            ["01-05-2025", "Netto", "-200,00"],
+            ["01-06-2025", "Test postering", "-50,00"],
+        ])
+        mapping = detect_mapping(table)
+        transactions = build_transactions(table, mapping, RuleSet.defaults(),
+                                          BuildOptions(decimal=",")).transactions
+        for t in transactions:
+            if t.month == "2025-06":
+                t.category = IGNORED_CATEGORY
+        summary = summarise(transactions)
+        self.assertEqual(summary.months, ["2025-05"])
+
 
 class PlanTests(unittest.TestCase):
     """The draft budget built from a full year of transactions."""
@@ -524,6 +566,24 @@ class RuleTests(unittest.TestCase):
     def test_header_row_is_ignored(self):
         rules = RuleSet.from_rows([["Nøgleord", "Kategori"], ["netto", "Mad"]])
         self.assertEqual(len(rules), 1)
+
+    def test_ignored_category_is_always_offered(self):
+        """"Ignoreret" must be selectable even before anything uses it, so
+        it is available up front in dropdowns and the categorise dialog."""
+        self.assertIn(IGNORED_CATEGORY, RuleSet.defaults().categories())
+        self.assertIn(IGNORED_CATEGORY, RuleSet([]).categories())
+        self.assertIn(IGNORED_CATEGORY, default_categories())
+
+    def test_ignored_category_not_duplicated(self):
+        """A rule that already points to "Ignoreret" must not double up."""
+        rules = RuleSet([("MobilePay Anders", IGNORED_CATEGORY)])
+        names = rules.categories()
+        self.assertEqual(names.count(IGNORED_CATEGORY), 1)
+
+    def test_ignore_rule_works_like_any_other(self):
+        rules = RuleSet([("Overførsel til opsparing", IGNORED_CATEGORY)])
+        self.assertEqual(rules.categorise("Overførsel til opsparing 05-2025"),
+                         IGNORED_CATEGORY)
 
 
 if __name__ == "__main__":

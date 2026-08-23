@@ -72,12 +72,12 @@ def interactive_pass(result, ruleset):
     """Ask once per unknown text and remember the answer as a new rule."""
     if not result.uncategorised:
         return 0
-    print("\n%d ukendte posteringstekster. Tryk Enter for at springe over, "
+    print("\n%d ukendte forretninger. Tryk Enter for at springe over, "
           "eller skriv et kategorinavn." % len(result.uncategorised))
     known = ruleset.categories()
     print("Kendte kategorier: %s" % ", ".join(known))
     added = 0
-    for text, count, total in result.uncategorised:
+    for text, count, total, keyword in result.uncategorised:
         try:
             answer = input("  %-45s (%d stk., %.2f) > " % (text[:45], count, total))
         except (EOFError, KeyboardInterrupt):
@@ -86,7 +86,7 @@ def interactive_pass(result, ruleset):
         answer = answer.strip()
         if not answer:
             continue
-        ruleset.add(text, answer)
+        ruleset.add(keyword or text, answer)
         added += 1
     if added:
         for transaction in result.transactions:
@@ -165,8 +165,8 @@ def print_report(result, summary, table, mapping):
     print("-" * len(header))
     print("%-*s%s" % (width, "Netto", "%14s" % _kr(summary.net)))
     if result.uncategorised:
-        print("\nStørste ukategoriserede posteringer:")
-        for text, count, total in result.uncategorised[:10]:
+        print("\nStørste ukategoriserede forretninger:")
+        for text, count, total, _keyword in result.uncategorised[:10]:
             print("  %-45s %d stk. %12s" % (text[:45], count, _kr(total)))
 
 
@@ -212,6 +212,7 @@ def main(argv=None):
             result.uncategorised = [
                 item for item in result.uncategorised
                 if ruleset.categorise(item[0]) == DEFAULT_CATEGORY]
+
 
     summary = summarise(result.transactions)
     print_report(result, summary, table, mapping)

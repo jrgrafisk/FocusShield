@@ -20,6 +20,7 @@ from budget_core.budget import (BuildOptions, KIND_EXPENSE, KIND_INCOME,
 from budget_core.columns import detect_mapping
 from budget_core.parsing import (detect_dayfirst, detect_decimal_separator,
                                  month_key, parse_amount, parse_date)
+from budget_core.merchant import merchant_key, merchant_name, rule_keyword
 from budget_core.plan import (GROUP_FIXED, GROUP_PERIODIC, GROUP_VARIABLE,
                               build_plan)
 from budget_core.rules import DEFAULT_CATEGORY, RuleSet
@@ -388,6 +389,66 @@ class YearFileTests(unittest.TestCase):
         self.assertEqual(rules.categorise("LØN OVERFØRSEL DANSK FIRMA A/S"), "Løn")
         self.assertEqual(rules.categorise("AFDRAG BILLÅN SANTANDER CONSUMER"),
                          "Lån og afdrag")
+
+
+class MerchantTests(unittest.TestCase):
+    """Grouping must ignore amounts, dates and receipt numbers."""
+
+    def test_noise_is_stripped(self):
+        self.assertEqual(
+            merchant_name("Dankort-nota 4711 NETTO 8021 KØBENHAVN 21.05 kl. 17.42"),
+            "NETTO KØBENHAVN")
+        self.assertEqual(merchant_name("Visa kortkøb WOLT DANMARK 245,00 DKK"),
+                         "WOLT DANMARK")
+        self.assertEqual(merchant_name("FØTEX 1234 – Dankort-nota 998877"), "FØTEX")
+
+    def test_same_shop_same_group(self):
+        first = "Dankort-nota 4711 NETTO 8021 KØBENHAVN 21.05 kl. 17.42"
+        second = "Dankort-nota 9987 NETTO 8021 KØBENHAVN 03.06 kl. 09.11"
+        self.assertEqual(merchant_key(first), merchant_key(second))
+
+    def test_amount_in_the_text_is_ignored(self):
+        self.assertEqual(merchant_key("MENY SLAGELSE 198,50"),
+                         merchant_key("MENY SLAGELSE 1.204,00"))
+
+    def test_keyword_is_a_substring_of_the_text(self):
+        """Rules match as plain substrings, so the keyword must be one."""
+        for text in ("JOE & THE JUICE FISKETORVET",
+                     "BS BETALING TRYG FORSIKRING A/S POLICE 88123",
+                     "Kortkøb 21.05 CIRCLE K AMAGER",
+                     "PAYPAL *SPOTIFY 119,00"):
+            keyword = rule_keyword(text)
+            self.assertIn(keyword.lower(), text.lower(), text)
+
+    def test_keyword_stops_at_a_shop_number(self):
+        self.assertEqual(rule_keyword("NETTO 8021 KØBENHAVN"), "NETTO")
+        self.assertEqual(rule_keyword("REMA 1000 VALBY"), "REMA")
+
+    def test_keyword_matches_other_receipts_from_the_same_shop(self):
+        rules = RuleSet([(rule_keyword("Dankort-nota 4711 NETTO 8021 KØBENHAVN"),
+                          "Mad")])
+        self.assertEqual(rules.categorise("Dankort-nota 5522 NETTO 1234 VALBY"),
+                         "Mad")
+
+    def test_grouping_in_the_result(self):
+        table = csvsniff.Table.from_rows([
+            ["Dato", "Tekst", "Beløb"],
+            ["01-05-2025", "Dankort-nota 111 UKENDT BUTIK 4711 01.05", "-100,00"],
+            ["02-05-2025", "Dankort-nota 222 UKENDT BUTIK 4711 02.05", "-50,00"],
+            ["03-05-2025", "Dankort-nota 333 UKENDT BUTIK 4711 03.05", "-25,00"],
+        ])
+        mapping = detect_mapping(table)
+        result = build_transactions(table, mapping, RuleSet.defaults())
+        self.assertEqual(len(result.uncategorised), 1)
+        name, count, total, keyword = result.uncategorised[0]
+        self.assertEqual(name, "UKENDT BUTIK")
+        self.assertEqual(count, 3)
+        self.assertAlmostEqual(total, -175.0)
+        self.assertEqual(keyword, "UKENDT BUTIK")
+
+    def test_unreadable_text_falls_back_to_itself(self):
+        self.assertEqual(merchant_name("1234567890"), "1234567890")
+        self.assertTrue(rule_keyword("1234567890"))
 
 
 class RuleTests(unittest.TestCase):

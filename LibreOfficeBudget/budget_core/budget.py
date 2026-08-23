@@ -11,6 +11,7 @@ import datetime as _dt
 from collections import Counter, OrderedDict
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from .merchant import merchant_key, merchant_name, rule_keyword
 from .parsing import month_key, month_label, parse_amount, parse_date
 from .rules import DEFAULT_CATEGORY, RuleSet
 from .textutils import squeeze
@@ -75,8 +76,8 @@ class BuildResult(object):
         self.warnings: List[str] = warnings
         self.skipped_no_date = skipped_no_date
         self.skipped_no_amount = skipped_no_amount
-        # [(text, count, total)] sorted by |total| descending
-        self.uncategorised: List[Tuple[str, int, float]] = uncategorised
+        # [(shop, count, total, rule keyword)] sorted by |total| descending
+        self.uncategorised: List[Tuple[str, int, float, str]] = uncategorised
 
     @property
     def ok(self) -> bool:
@@ -181,14 +182,19 @@ def build_transactions(table, mapping, ruleset: Optional[RuleSet] = None,
 
     transactions.sort(key=lambda t: (t.date, t.source_row))
 
-    counter: Dict[str, List[float]] = OrderedDict()
+    # Group by shop, not by the raw text: receipt numbers, dates and amounts
+    # inside the text would otherwise make every single line its own group.
+    counter: Dict[str, List] = OrderedDict()
     for transaction in transactions:
         if transaction.category == DEFAULT_CATEGORY:
-            entry = counter.setdefault(transaction.text, [0, 0.0])
-            entry[0] += 1
-            entry[1] += transaction.amount
-    uncategorised = sorted(((text, int(count), total)
-                            for text, (count, total) in counter.items()),
+            key = merchant_key(transaction.text)
+            entry = counter.setdefault(
+                key, [merchant_name(transaction.text), 0, 0.0,
+                      rule_keyword(transaction.text)])
+            entry[1] += 1
+            entry[2] += transaction.amount
+    uncategorised = sorted(((name, int(count), total, keyword)
+                            for name, count, total, keyword in counter.values()),
                            key=lambda item: abs(item[2]), reverse=True)
 
     return BuildResult(transactions, warnings, skipped_no_date, skipped_no_amount,

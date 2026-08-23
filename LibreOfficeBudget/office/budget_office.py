@@ -19,6 +19,7 @@ import datetime
 import uno
 
 from budget_core.budget import KIND_EXPENSE, KIND_INCOME, Summary
+from budget_core.merchant import merchant_key, merchant_name, rule_keyword
 from budget_core.parsing import MONTH_NAMES_DA
 from budget_core.plan import (GROUP_FIXED, GROUP_HELP, GROUP_LABELS,
                               GROUP_PERIODIC, GROUP_VARIABLE, build_plan)
@@ -1202,17 +1203,24 @@ class BudgetWorkbook(object):
                 tuple((name,) for name in names))
 
     def uncategorised_groups(self):
-        """[(text, count, total, [(column, row), ...])] for uncategorised rows."""
+        """The uncategorised rows, grouped by shop.
+
+        Returns ``[(name, count, total, [(column, row), ...], keyword)]``.
+        The grouping ignores amounts, dates and receipt numbers inside the
+        text - otherwise every single line would be its own group.
+        """
         groups = {}
         order = []
         for transaction in self.read_transactions():
             category = (transaction.category or "").strip()
             if category and category != DEFAULT_CATEGORY:
                 continue
-            entry = groups.get(transaction.text)
+            key = merchant_key(transaction.text)
+            entry = groups.get(key)
             if entry is None:
-                entry = [transaction.text, 0, 0.0, []]
-                groups[transaction.text] = entry
+                entry = [merchant_name(transaction.text), 0, 0.0, [],
+                         rule_keyword(transaction.text)]
+                groups[key] = entry
                 order.append(entry)
             entry[1] += 1
             entry[2] += transaction.amount

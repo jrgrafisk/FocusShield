@@ -44,14 +44,16 @@ Manager ▸ Tilføj**. Genstart LibreOffice bagefter — så ligger menuen
 
    | Ark | Indhold |
    |---|---|
-   | **Budgetforslag** | Et udkast til et fast månedsbudget ud fra hele perioden — faste, variable og periodiske udgifter hver for sig, med en Mål-kolonne du selv kan skrive i |
-   | **Prognose** | Saldoen 24 måneder frem, hvis alt fortsætter som nu — og hvis du rammer dine mål. Med graf |
+   | **Budgetforslag** | Et udkast til et fast månedsbudget ud fra hele perioden — faste, variable og periodiske udgifter hver for sig, med en Mål- og en Konto-kolonne du selv kan rette i |
+   | **Prognose** | Saldoen 24 måneder frem, hvis alt fortsætter som nu — og hvis du rammer dine mål. Med graf og en opdeling pr. konto |
    | **Oversigt** (ét pr. måned) | Budget / Faktisk / Diff. pr. kategori, startsaldo, slutsaldo og nøgletal — samme opsæt som skabelonen, bare i kroner |
    | **Transaktioner** | Udgifter i kolonne B:E, indtægter i G:J (Dato, Beløb, Beskrivelse, Kategori) |
    | **Alle måneder** | Kategorier × måneder med totaler og gennemsnit (kun når filen dækker flere måneder) |
-   | **Kategorier** | Nøgleordene, der styrer den automatiske kategorisering |
+   | **Kategorier** | Nøgleordene og konto-tildelingen, der styrer den automatiske kategorisering |
+   | **Konti** | Dine konti og deres saldo lige nu — kilden til de "reelle tal" i Prognose |
 
-   *Budgetforslag og Prognose laves kun, når filen dækker mere end én måned.*
+   *Budgetforslag og Prognose laves kun, når filen dækker mere end én måned.
+   Konti oprettes altid, med tre tomme eksempelkonti klar til at blive udfyldt.*
 
 4. Ret en kategori i **Transaktioner** (der er en rulleliste i
    kategori-kolonnen) — oversigten opdaterer sig selv, fordi "Faktisk" er
@@ -82,16 +84,45 @@ nuværende forbrug, står der `-4.000 kr.` — så du kan se præcis hvad du ska
 finde. Nederst summeres det hele til **Til opsparing**, og du kan skrive et
 **opsparingsmål pr. måned**; linjen under viser, om målet hænger sammen.
 
+Hold musen over en kategori for at se, hvilke posteringer der ligger bag
+gennemsnittet — de største bidrag, med dato og beløb, plus det samlede antal.
+
+### Konto pr. kategori
+
+Kolonnen **Konto** yderst til højre siger, hvilken konto der betaler for
+kategorien - fx at *Bolig*, *El, vand og varme* og *Lån og afdrag* trækkes fra
+"Budgetkonto", mens *Løn* går ind på "Lønkonto". Den udfyldes automatisk fra
+arket **Kategorier**, men kan rettes direkte i Budgetforslag for én kategori
+ad gangen; den rettelse husker den til næste ombygning.
+
+## Konti
+
+Arket **Konti** er dine rigtige konti og deres saldo lige nu - navn, type og
+beløb (den lyserøde kolonne). Der oprettes altid tre eksempelkonti
+(Lønkonto/Budgetkonto/Opsparingskonto med 0 kr.), som du bare retter til.
+
+Så snart mindst én konto har et beløb forskelligt fra 0, bruger **Prognose**
+automatisk summen af Konti som startsaldo i stedet for et gæt - "reelle tal",
+som opdaterer sig selv, når du retter en saldo.
+
 ## Prognose
 
-Arket **Prognose** fremskriver saldoen 24 måneder ud fra din nuværende
-startsaldo (som du kan rette i den lyserøde celle), med to linjer i grafen:
+Arket **Prognose** fremskriver saldoen 24 måneder frem, med to linjer i
+grafen:
 
 * **Saldo nu** — hvis alt fortsætter præcis som de sidste måneder.
 * **Saldo m. mål** — hvis du rammer tallene i Mål-kolonnen.
 
-Begge kolonner er formler, der peger på Budgetforslag, så grafen flytter sig,
+Begge linjer er formler, der peger på Budgetforslag, så grafen flytter sig,
 i samme øjeblik du ændrer et mål.
+
+Nederst på arket står **Konti - forventet udvikling**: for hver konto, der er
+brugt i Budgetforslags Konto-kolonne, vises den nuværende saldo, det
+forventede netto pr. måned (summen af de kategorier, der er tildelt kontoen)
+og den projicerede saldo om 12 og 24 måneder. En konto, der kun har udgifter
+tildelt (fx en budgetkonto uden løn ind på den), vil naturligt vise et
+negativt netto — det er ikke en fejl, det betyder bare, at du selv overfører
+penge til den et sted fra, som ikke er talt med her.
 
 ## Kategorisering
 
@@ -131,9 +162,24 @@ bevares. Reglerne gemmes samtidig i din brugerprofil
   allerede er åbent. Brug den til `.xlsx`/`.ods`-filer: åbn dem i Calc først.
 * **Kategorisér poster uden kategori…** og **Kategorier - opret, omdøb, slet…**
   (se ovenfor).
+* **Konti - ret saldi…** — hopper til (og opretter om nødvendigt) arket Konti.
+* **Opret bankbudget (øjebliksbillede)** — se nedenfor.
 * **Opdatér kategorier og budget** — kører reglerne igennem igen og bygger
   alle oversigter, budgetforslaget og prognosen om.
 * **Vis kategoriregler** / **Nulstil kategoriregler**.
+
+## Bankbudget
+
+Når dine mål i Budgetforslag sidder, som du vil have dem, laver
+**Budget ▸ Opret bankbudget (øjebliksbillede)** et nyt ark, **Bankbudget**:
+en ren, udskriftsklar opstilling — Indtægter, Udgifter og Rådighedsbeløb,
+kategori for kategori, uden formler eller farvekoder — klar til at
+printes eller gemmes som PDF og sendes til banken.
+
+Det er bevidst et **øjebliksbillede**: tallene er faste værdier taget fra
+Mål-kolonnen i det øjeblik du trykker på knappen, ikke formler. Retter du
+dine mål bagefter, opdateres Bankbudget ikke automatisk — kør kommandoen
+igen, når du er klar til en ny version.
 
 ## Hvilke CSV-filer virker?
 
@@ -176,7 +222,7 @@ Der skrives `<navn>_kategoriseret.csv` (med kategori, type og måned) og
 ## Test
 
 ```bash
-python3 -m unittest discover -s tests      # 51 test, ingen LibreOffice nødvendig
+python3 -m unittest discover -s tests      # 61 test, ingen LibreOffice nødvendig
 
 # ende-til-ende mod en kørende LibreOffice:
 soffice --headless --norestore --accept="socket,host=localhost,port=2002;urp;" &
@@ -200,3 +246,11 @@ UTF-16 med tabulator, uden overskrifter, `sep=`-linje, en rodet fil — og
   posteringer skal området udvides (`TX_MAX_ROW` i `office/budget_office.py`).
 * Beløb behandles i kroner. Er der en valutakolonne med andre valutaer, læses
   beløbene som de står — der omregnes ikke.
+* Kontoernes netto pr. måned i Prognose tæller kun de kategorier, der er
+  tildelt kontoen — overførsler, du selv laver mellem dine egne konti (fx en
+  fast overførsel til en budgetkonto), er ikke modelleret. Vil du have det
+  med, så opret en kategori for overførslen og tildel den kontoen, den
+  lander på.
+* Bankbudget er et øjebliksbillede (faste tal, ikke formler) — det opdateres
+  ikke af sig selv, hverken når du retter et mål eller vælger "Opdatér
+  kategorier og budget". Kør "Opret bankbudget" igen for en ny version.

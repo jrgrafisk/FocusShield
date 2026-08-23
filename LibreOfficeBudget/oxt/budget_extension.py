@@ -83,6 +83,10 @@ class BudgetJob(unohelper.Base, XJobExecutor):
                 self.show_rules()
             elif action == "resetrules":
                 self.reset_rules()
+            elif action == "accounts":
+                self.show_accounts()
+            elif action == "bankbudget":
+                self.bank_budget()
             elif action == "about":
                 self.about()
             elif action.startswith("headless"):
@@ -556,14 +560,52 @@ class BudgetJob(unohelper.Base, XJobExecutor):
             self.message("Budget fra CSV", "Åbn budgettet først.")
             return
         if not self.ask("Nulstil kategoriregler",
-                        "Erstat reglerne i arket \"%s\" med standardreglerne?"
-                        % budget_office.SHEET_RULES):
+                        "Erstat reglerne i arket \"%s\" med standardreglerne? "
+                        "Konto-kolonnen bevares." % budget_office.SHEET_RULES):
             return
         workbook = budget_office.BudgetWorkbook(doc)
+        accounts = workbook.read_category_accounts()
         ruleset = RuleSet.defaults()
-        workbook.write_rules(workbook.sheet(budget_office.SHEET_RULES), ruleset)
+        workbook.write_rules(workbook.sheet(budget_office.SHEET_RULES), ruleset,
+                             accounts=accounts)
         doc.CurrentController.setActiveSheet(
             doc.Sheets.getByName(budget_office.SHEET_RULES))
+
+    def show_accounts(self):
+        """Jump to (or create) the Konti sheet."""
+        doc = self.desktop.getCurrentComponent()
+        if not doc or not hasattr(doc, "Sheets"):
+            self.message("Budget fra CSV", "Åbn budgettet først.")
+            return
+        workbook = budget_office.BudgetWorkbook(doc)
+        workbook._ensure_accounts_sheet()
+        doc.CurrentController.setActiveSheet(
+            doc.Sheets.getByName(budget_office.SHEET_ACCOUNTS))
+
+    def bank_budget(self):
+        """Snapshot the current Mål column into a clean, printable sheet."""
+        workbook = self._workbook()
+        if workbook is None:
+            return
+        if not workbook.doc.Sheets.hasByName(budget_office.SHEET_PLAN):
+            self.message("Budget fra CSV",
+                         "Der er intet budgetforslag endnu - importér en fil "
+                         "med mere end én måned først.")
+            return
+        targets = workbook.read_targets()
+        if not targets:
+            self.message("Budget fra CSV",
+                         "Fandt ingen mål i \"%s\"." % budget_office.SHEET_PLAN)
+            return
+        doc = workbook.doc
+        sheet = workbook.sheet(budget_office.SHEET_BANK)
+        workbook.write_bank_budget(sheet, targets)
+        doc.CurrentController.setActiveSheet(sheet)
+        self.message("Bankbudget",
+                     "Arket \"%s\" er oprettet ud fra de mål, du har sat lige "
+                     "nu i \"%s\". Det opdateres ikke automatisk - kør "
+                     "kommandoen igen, hvis du retter dine mål."
+                     % (budget_office.SHEET_BANK, budget_office.SHEET_PLAN))
 
     def about(self):
         self.message(

@@ -299,7 +299,7 @@ class PlanTests(unittest.TestCase):
         _table, _mapping, result = build("aar_2024.csv")
         cls.result = result
         cls.summary = summarise(result.transactions)
-        cls.plan = build_plan(cls.summary)
+        cls.plan = build_plan(cls.summary, cls.result.transactions)
         cls.by_category = dict(((c.kind, c.category), c)
                                for c in cls.plan.categories)
 
@@ -370,8 +370,25 @@ class PlanTests(unittest.TestCase):
 
     def test_short_period_is_flagged(self):
         _table, _mapping, result = build("danskebank.csv")
-        plan = build_plan(summarise(result.transactions))
+        plan = build_plan(summarise(result.transactions), result.transactions)
         self.assertTrue(plan.uncertain)
+
+    def test_category_remembers_its_transactions(self):
+        """So the spreadsheet can show a hover comment per row."""
+        groceries = self.entry("Dagligvarer")
+        self.assertGreater(groceries.transaction_count, 0)
+        self.assertTrue(groceries.sample)
+        self.assertLessEqual(len(groceries.sample), 8)
+        # Largest first, so the comment leads with what actually matters.
+        amounts = [abs(t.amount) for t in groceries.sample]
+        self.assertEqual(amounts, sorted(amounts, reverse=True))
+        for t in groceries.sample:
+            self.assertEqual(t.category, "Dagligvarer")
+
+    def test_sample_is_capped_but_count_is_not(self):
+        holiday = self.entry("Rejser")
+        self.assertLessEqual(len(holiday.sample), 8)
+        self.assertGreaterEqual(holiday.transaction_count, len(holiday.sample))
 
 
 class YearFileTests(unittest.TestCase):

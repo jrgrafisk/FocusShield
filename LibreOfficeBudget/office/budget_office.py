@@ -24,6 +24,7 @@ from budget_core.parsing import MONTH_NAMES_DA
 from budget_core.plan import (GROUP_FIXED, GROUP_HELP, GROUP_LABELS,
                               GROUP_PERIODIC, GROUP_VARIABLE, build_plan)
 from budget_core.rules import DEFAULT_CATEGORY
+from budget_core.textutils import fold
 
 # ---------------------------------------------------------------------------
 # Design tokens taken from the template
@@ -50,11 +51,19 @@ SHEET_RULES = "Kategorier"
 SHEET_MONTHS = "Alle måneder"
 SHEET_PLAN = "Budgetforslag"
 SHEET_FORECAST = "Prognose"
+SHEET_ACCOUNTS = "Konti"
+SHEET_BANK = "Bankbudget"
 SUMMARY_PREFIX = "Oversigt"
+
+# Konti geometry
+ACC_HEADER_ROW = 4
+ACC_COL_NAME, ACC_COL_TYPE, ACC_COL_BALANCE = 1, 2, 3   # B, C, D (0 based)
+ACC_TYPES = ("Lønkonto", "Budgetkonto", "Opsparingskonto", "Andet")
 
 # Budgetforslag geometry
 PLAN_HEADER_ROW = 5
 PLAN_COL_NAME, PLAN_COL_MEAN, PLAN_COL_TARGET, PLAN_COL_DIFF = "B", "D", "H", "I"
+PLAN_COL_ACCOUNT = "J"
 
 # Prognose
 FORECAST_MONTHS = 24
@@ -191,6 +200,23 @@ class SheetPen(object):
     def merge(self, ref):
         self.rng(ref).merge(True)
 
+    def note(self, ref, text):
+        """A cell comment shown on hover (not pinned open).
+
+        ``cell.Annotation`` only returns a live, persisted annotation for a
+        cell that already has one - setting text through a freshly fetched
+        reference on a cell without one silently does nothing.  Creating it
+        through ``sheet.Annotations.insertNew()`` is what actually sticks.
+        """
+        if not text:
+            return
+        try:
+            cell = self.cell(ref)
+            self.sheet.Annotations.insertNew(cell.CellAddress, text)
+            cell.Annotation.IsVisible = False
+        except Exception:
+            pass
+
     # -- styling ----------------------------------------------------------
     def style(self, ref, bg=None, color=None, size=None, bold=None,
               italic=None, font=None, align=None, valign=None, wrap=None,
@@ -313,11 +339,16 @@ class BudgetWorkbook(object):
             self.write_transactions(tx_sheet, transactions)
             self.write_rules(self.sheet(SHEET_RULES), ruleset, summary)
 
-            plan = build_plan(summary) if len(summary.months) > 1 else None
+            self._ensure_accounts_sheet()
+            category_accounts = self.read_category_accounts()
+            plan = build_plan(summary, transactions) if len(summary.months) > 1 else None
             if plan is not None:
-                plan_rows = self.write_plan(self.sheet(SHEET_PLAN), plan)
+                plan_rows = self.write_plan(self.sheet(SHEET_PLAN), plan,
+                                            accounts=category_accounts)
+                accounts_total = self._accounts_total()
+                fallback = (start_balance or 0.0) + summary.net
                 self.write_forecast(self.sheet(SHEET_FORECAST), plan, plan_rows,
-                                    (start_balance or 0.0) + summary.net)
+                                    accounts_total if accounts_total else fallback)
 
             planned = self._planned_values(summary) if suggest_planned else {}
             previous = None
@@ -356,7 +387,7 @@ class BudgetWorkbook(object):
         """Summaries first, then transactions, months and rules."""
         order = [SHEET_PLAN, SHEET_FORECAST]
         order += [self.summary_name(months, m) for m in months]
-        order += [SHEET_TX, SHEET_MONTHS, SHEET_RULES]
+        order += [SHEET_TX, SHEET_MONTHS, SHEET_RULES, SHEET_ACCOUNTS, SHEET_BANK]
         sheets = self.doc.Sheets
         position = 0
         for name in order:
@@ -452,14 +483,24 @@ class BudgetWorkbook(object):
 
     def _add_category_dropdown(self, sheet, column, last_row):
         """Cell validity that lists the categories from the rules sheet."""
+        self._add_list_dropdown(sheet, column, TX_FIRST_ROW + 1, last_row,
+                                "$%s.$E$5:$E$80" % SHEET_RULES)
+
+    def _add_account_dropdown(self, sheet, column, first_row, last_row):
+        """Cell validity that lists the account names from the Konti sheet."""
+        self._add_list_dropdown(sheet, column, first_row, last_row,
+                                "$%s.$B$%d:$B$50" % (SHEET_ACCOUNTS,
+                                                     ACC_HEADER_ROW + 1))
+
+    def _add_list_dropdown(self, sheet, column, first_row, last_row, source):
         try:
-            ref = _ref(column, TX_FIRST_ROW + 1, column, max(last_row, TX_FIRST_ROW + 1))
+            ref = _ref(column, first_row, column, max(last_row, first_row))
             target = sheet.getCellRangeByName(ref)
             validation = target.Validation
             validation.Type = _enum("com.sun.star.sheet.ValidationType", "LIST")
             validation.ShowErrorMessage = False
             validation.ShowList = 1
-            validation.setFormula1("$%s.$E$5:$E$80" % SHEET_RULES)
+            validation.setFormula1(source)
             target.Validation = validation
         except Exception:
             pass
@@ -731,26 +772,30 @@ class BudgetWorkbook(object):
         return '=IF(ISBLANK(%s);"";%s)' % (criterion, body)
 
     # -- Rules sheet ------------------------------------------------------
-    def write_rules(self, sheet, ruleset, summary=None):
+    def write_rules(self, sheet, ruleset, summary=None, accounts=None):
         pen = self.pen(sheet)
-        pen.column_widths({0: 5.13, 1: 24.0, 2: 20.0, 3: 5.13, 4: 20.0})
+        pen.column_widths({0: 5.13, 1: 24.0, 2: 20.0, 3: 5.13, 4: 20.0, 5: 16.0})
+        accounts = accounts or {}
 
-        pen.merge("B2:E2")
+        pen.merge("B2:F2")
         pen.text("B2", "Kategoriregler", font=FONT_TITLE, size=18, bold=True,
                  color=ORANGE, align="left")
-        pen.merge("B3:E3")
+        pen.merge("B3:F3")
         pen.text("B3", "Et nøgleord matcher, når det indgår i teksten på posteringen "
                        "(uden hensyn til store/små bogstaver). Vælg \"Budget ▸ "
                        "Opdatér kategorier og budget\" for at bruge ændringerne. "
-                       "Skriv \"re:\" foran for et regulært udtryk.",
+                       "Skriv \"re:\" foran for et regulært udtryk. Konto (kolonne "
+                       "F) sætter, hvilken konto der som udgangspunkt betaler for "
+                       "kategorien - se arket \"%s\".""" % SHEET_ACCOUNTS,
                  font=FONT_BODY, size=9, italic=True, color=MUTED, align="left",
                  wrap=True, valign="center")
-        pen.row_height(3, 30)
+        pen.row_height(3, 34)
 
         pen.text("B4", "Nøgleord", font=FONT_BODY, size=11, bold=True, color=NAVY)
         pen.text("C4", "Kategori", font=FONT_BODY, size=11, bold=True, color=NAVY)
         pen.text("E4", "Kategoriliste", font=FONT_BODY, size=11, bold=True,
                  color=NAVY)
+        pen.text("F4", "Konto", font=FONT_BODY, size=11, bold=True, color=NAVY)
 
         rows = ruleset.to_rows()
         if rows:
@@ -766,11 +811,137 @@ class BudgetWorkbook(object):
                     categories.append(extra)
         if DEFAULT_CATEGORY not in categories:
             categories.append(DEFAULT_CATEGORY)
-        target = sheet.getCellRangeByPosition(4, 4, 4, 4 + len(categories) - 1)
+        last_row = 4 + len(categories) - 1
+        target = sheet.getCellRangeByPosition(4, 4, 4, last_row)
         target.setDataArray(tuple((name,) for name in categories))
-        pen.style(_ref(4, 5, 4, 4 + len(categories)), font=FONT_BODY, size=10,
+        pen.style(_ref(4, 5, 4, last_row + 1), font=FONT_BODY, size=10,
                   color=DARK, align="left")
+        account_values = tuple((accounts.get(name, ""),) for name in categories)
+        sheet.getCellRangeByPosition(5, 4, 5, last_row).setDataArray(account_values)
+        pen.style(_ref(5, 5, 5, last_row + 1), font=FONT_BODY, size=10, color=DARK,
+                  align="left")
+        self._add_account_dropdown(sheet, 5, 5, last_row + 1)
         self._freeze(sheet, 0, 4)
+
+    # -- Konti --------------------------------------------------------------
+    def _ensure_accounts_sheet(self):
+        """Create the Konti sheet with a starter template, unless it exists."""
+        if self.doc.Sheets.hasByName(SHEET_ACCOUNTS):
+            return
+        self.write_accounts(self.sheet(SHEET_ACCOUNTS),
+                            [("Lønkonto", "Lønkonto", 0.0),
+                             ("Budgetkonto", "Budgetkonto", 0.0),
+                             ("Opsparingskonto", "Opsparingskonto", 0.0)])
+
+    def write_accounts(self, sheet, rows):
+        """Write the whole Konti sheet. ``rows``: [(navn, type, saldo), ...]."""
+        pen = self.pen(sheet)
+        pen.column_widths({0: 4.0, 1: 22.0, 2: 18.0, 3: 16.0})
+
+        pen.merge("B2:D2")
+        pen.text("B2", "Konti", font=FONT_TITLE, size=18, bold=True, color=ORANGE,
+                 align="left")
+        pen.merge("B3:D3")
+        pen.text("B3", "Nuværende saldo. Prognosen bruger summen som "
+                       "startsaldo. Sæt en konto pr. kategori i \"%s\" eller "
+                       "\"%s\" for at se, hvordan hver konto udvikler sig."
+                       % (SHEET_RULES, SHEET_PLAN),
+                 font=FONT_BODY, size=9, italic=True, color=MUTED, align="left",
+                 wrap=True, valign="center")
+        pen.row_height(3, 46)
+
+        row = ACC_HEADER_ROW
+        pen.text("B%d" % row, "Konto", font=FONT_BODY, size=11, bold=True,
+                 color=NAVY, align="left")
+        pen.text("C%d" % row, "Type", font=FONT_BODY, size=11, bold=True,
+                 color=NAVY, align="left")
+        pen.text("D%d" % row, "Saldo", font=FONT_BODY, size=11, bold=True,
+                 color=NAVY, align="right")
+
+        first = row + 1
+        rows = list(rows) or [("", "", 0.0)]
+        for offset, (name, kind, balance) in enumerate(rows):
+            current = first + offset
+            pen.text("B%d" % current, name, font=FONT_BODY, size=10, bold=True,
+                     color=DARK, align="left")
+            pen.text("C%d" % current, kind, font=FONT_BODY, size=10,
+                     color=TEXT_GREY, align="left")
+            pen.number("D%d" % current, balance, font=FONT_BODY, size=10,
+                       color=DARK, align="right", bg=PEACH,
+                       fmt=self.formats.currency)
+
+        last = first + len(rows) - 1
+        total_row = last + 2
+        pen.text("B%d" % total_row, "I alt", font=FONT_BODY, size=10, bold=True,
+                 color=NAVY, align="left")
+        pen.formula("D%d" % total_row,
+                    "=SUM(D%d:D%d)" % (first, last), font=FONT_BODY, size=10,
+                    bold=True, color=NAVY, align="right", fmt=self.formats.currency)
+
+        self._print_setup(sheet, 3, total_row + 1)
+        self._freeze(sheet, 0, row)
+
+    def _scan_accounts(self):
+        """[(navn, type, saldo, ui_row)] from the Konti sheet, or []."""
+        if not self.doc.Sheets.hasByName(SHEET_ACCOUNTS):
+            return []
+        sheet = self.doc.Sheets.getByName(SHEET_ACCOUNTS)
+        last_row = used_row_count(sheet)
+        accounts = []
+        for row in range(ACC_HEADER_ROW, last_row + 1):
+            name = sheet.getCellByPosition(ACC_COL_NAME, row).getString().strip()
+            if not name or fold(name) == "i alt":
+                continue
+            kind = sheet.getCellByPosition(ACC_COL_TYPE, row).getString().strip()
+            balance = sheet.getCellByPosition(ACC_COL_BALANCE, row).getValue()
+            accounts.append((name, kind, balance, row + 1))
+        return accounts
+
+    def read_accounts(self):
+        """[(navn, type, saldo)] from the Konti sheet, or []."""
+        return [(name, kind, balance)
+                for name, kind, balance, _row in self._scan_accounts()]
+
+    def _accounts_total(self):
+        return sum(balance for _name, _kind, balance in self.read_accounts())
+
+    def read_category_accounts(self):
+        """{kategori: konto} from column F of the Kategorier sheet."""
+        accounts = {}
+        if not self.doc.Sheets.hasByName(SHEET_RULES):
+            return accounts
+        sheet = self.doc.Sheets.getByName(SHEET_RULES)
+        last_row = used_row_count(sheet)
+        for row in range(4, last_row + 1):
+            category = sheet.getCellByPosition(4, row).getString().strip()
+            account = sheet.getCellByPosition(5, row).getString().strip()
+            if category and account:
+                accounts[category] = account
+        return accounts
+
+    def read_plan_accounts(self):
+        """{(kind, kategori): konto} read back from the Budgetforslag sheet."""
+        accounts = {}
+        if not self.doc.Sheets.hasByName(SHEET_PLAN):
+            return accounts
+        sheet = self.doc.Sheets.getByName(SHEET_PLAN)
+        last_row = used_row_count(sheet)
+        kind = KIND_INCOME
+        for row in range(PLAN_HEADER_ROW, last_row + 1):
+            name = sheet.getCellByPosition(1, row).getString().strip()
+            account = sheet.getCellByPosition(9, row).getString().strip()
+            if not name:
+                continue
+            upper = name.upper()
+            if upper.startswith("INDTÆGT"):
+                kind = KIND_INCOME
+                continue
+            if "UDGIFTER" in upper:
+                kind = KIND_EXPENSE
+                continue
+            if account and not name.lower().startswith("i alt"):
+                accounts[(kind, name)] = account
+        return accounts
 
     # -- All months sheet -------------------------------------------------
     def write_months(self, sheet, summary):
@@ -862,12 +1033,16 @@ class BudgetWorkbook(object):
 
 
     # -- Budgetforslag ----------------------------------------------------
-    def write_plan(self, sheet, plan, targets=None):
+    def write_plan(self, sheet, plan, targets=None, accounts=None,
+                   plan_accounts=None):
         """A draft budget for a normal month, with an editable target column."""
         pen = self.pen(sheet)
         targets = targets or {}
+        accounts = accounts or {}
+        plan_accounts = plan_accounts or {}
+        account_rows = {}
         pen.column_widths({0: 4.0, 1: 26.0, 2: 6.0, 3: 12.5, 4: 12.5, 5: 12.5,
-                           6: 12.5, 7: 13.5, 8: 13.5})
+                           6: 12.5, 7: 13.5, 8: 13.5, 9: 16.0})
 
         pen.merge("B2:E2")
         pen.text("B2", "Budgetforslag", font=FONT_TITLE, size=18, bold=True,
@@ -875,15 +1050,17 @@ class BudgetWorkbook(object):
         first, last = plan.months[0], plan.months[-1]
         note = ("Bygger på %d måneder (%s - %s). Skriv dine egne tal i kolonnen "
                 "\"Mål\" - \"Forskel\" viser, hvor meget du skal spare (minus) "
-                "eller har i luft (plus) i forhold til dit nuværende forbrug."
-                % (len(plan.months), month_title(first).lower(),
-                   month_title(last).lower()))
+                "eller har i luft (plus) i forhold til dit nuværende forbrug. "
+                "\"Konto\" sætter, hvilken konto der betaler - se arket \"%s\". "
+                "Hold musen over en kategori for at se, hvilke posteringer "
+                "der ligger bag." % (len(plan.months), month_title(first).lower(),
+                                     month_title(last).lower(), SHEET_ACCOUNTS))
         if plan.uncertain:
             note += " Bemærk: få måneders data - tallene er usikre."
-        pen.merge("B3:I3")
+        pen.merge("B3:J3")
         pen.text("B3", note, font=FONT_BODY, size=9, italic=True, color=MUTED,
                  align="left", wrap=True, valign="center")
-        pen.row_height(3, 26)
+        pen.row_height(3, 34)
 
         row = PLAN_HEADER_ROW
         pen.merge("B%d:C%d" % (row, row))
@@ -894,12 +1071,15 @@ class BudgetWorkbook(object):
                               ("H", "Mål"), ("I", "Forskel")):
             pen.text("%s%d" % (column, row), title, font=FONT_BODY, size=11,
                      bold=True, color=NAVY, align="right")
+        pen.text("J%d" % row, "Konto", font=FONT_BODY, size=11, bold=True,
+                 color=NAVY, align="left")
 
         rows = {}
         row += 1
         row, rows["income"] = self._plan_block(
             pen, row, "INDTÆGTER", "Forslaget er en typisk måned - ikke den bedste.",
-            plan.income, targets, "Indtægt i alt")
+            plan.income, targets, "Indtægt i alt", accounts, plan_accounts,
+            account_rows)
 
         group_rows = []
         for group in (GROUP_FIXED, GROUP_VARIABLE, GROUP_PERIODIC):
@@ -909,7 +1089,7 @@ class BudgetWorkbook(object):
             row += 1
             row, total_row = self._plan_block(
                 pen, row, GROUP_LABELS[group], GROUP_HELP[group], entries,
-                targets, "I alt")
+                targets, "I alt", accounts, plan_accounts, account_rows)
             group_rows.append(total_row)
 
         row += 1
@@ -924,6 +1104,8 @@ class BudgetWorkbook(object):
                         align="right",
                         fmt=self.formats.signed if column == "I"
                         else self.formats.currency)
+        for column in ("E", "F", "G", "J"):
+            pen.style("%s%d" % (column, row), bg=NAVY)
 
         row += 1
         rows["savings"] = row
@@ -936,7 +1118,7 @@ class BudgetWorkbook(object):
                                         rows["expense"]),
                         font=FONT_BODY, size=11, bold=True, color=WHITE,
                         bg=ORANGE, align="right", fmt=self.formats.currency)
-        for column in ("E", "F", "G"):
+        for column in ("E", "F", "G", "J"):
             pen.style("%s%d" % (column, row), bg=ORANGE)
         pen.formula("I%d" % row, "=H%d-D%d" % (row, row), font=FONT_BODY, size=11,
                     bold=True, color=WHITE, bg=ORANGE, align="right",
@@ -965,11 +1147,14 @@ class BudgetWorkbook(object):
                     '"Målet er inden for rækkevidde")' % row,
                     font=FONT_BODY, size=9, italic=True, color=MUTED, align="left")
 
-        self._print_setup(sheet, 8, row + 1)
+        self._add_account_dropdown(sheet, 9, PLAN_HEADER_ROW + 1, row + 1)
+        self._print_setup(sheet, 9, row + 1)
         self._freeze(sheet, 0, PLAN_HEADER_ROW)
+        rows["accounts"] = account_rows
         return rows
 
-    def _plan_block(self, pen, row, title, help_text, entries, targets, total_label):
+    def _plan_block(self, pen, row, title, help_text, entries, targets, total_label,
+                    accounts, plan_accounts, account_rows):
         """One section of the draft budget; returns (next_row, total_row)."""
         pen.merge("B%d:C%d" % (row, row))
         pen.text("B%d" % row, title, font=FONT_BODY, size=11, bold=True,
@@ -977,6 +1162,7 @@ class BudgetWorkbook(object):
         pen.merge("D%d:I%d" % (row, row))
         pen.text("D%d" % row, help_text, font=FONT_BODY, size=9, italic=True,
                  color=LIGHT_TEXT, bg=NAVY, align="left", valign="center")
+        pen.style("J%d" % row, bg=NAVY)
 
         first = row + 1
         for offset, entry in enumerate(entries):
@@ -984,6 +1170,7 @@ class BudgetWorkbook(object):
             pen.merge("B%d:C%d" % (current, current))
             pen.text("B%d" % current, entry.category, font=FONT_BODY, size=10,
                      bold=True, color=DARK, align="left")
+            pen.note("B%d" % current, _plan_comment(entry))
             for column, value in (("D", entry.mean_all), ("E", entry.median),
                                   ("F", entry.low), ("G", entry.high)):
                 pen.number("%s%d" % (column, current), value, font=FONT_BODY,
@@ -996,6 +1183,13 @@ class BudgetWorkbook(object):
             pen.formula("I%d" % current, "=H%d-D%d" % (current, current),
                         font=FONT_BODY, size=10, color=MUTED, align="right",
                         fmt=self.formats.signed)
+            account = (plan_accounts.get((entry.kind, entry.category)) or
+                      accounts.get(entry.category, ""))
+            pen.text("J%d" % current, account, font=FONT_BODY, size=10,
+                     color=DARK, align="left")
+            if account:
+                sign = 1 if entry.kind == KIND_INCOME else -1
+                account_rows.setdefault(account, []).append((current, sign))
 
         total_row = first + len(entries)
         pen.merge("B%d:C%d" % (total_row, total_row))
@@ -1064,10 +1258,22 @@ class BudgetWorkbook(object):
                  wrap=True, valign="center")
 
         pen.merge("B5:C5")
-        pen.text("B5", "Startsaldo", font=FONT_BODY, size=10, bold=True,
-                 color=NAVY, align="left")
-        pen.number("D5", start_balance or 0.0, font=FONT_BODY, size=10,
-                   color=DARK, align="right", bg=PEACH, fmt=self.formats.currency)
+        accounts = self._scan_accounts()
+        # A freshly seeded Konti sheet has accounts but every balance is
+        # still 0 - keep the manual field until the user has actually
+        # filled one in, instead of quietly showing a startsaldo of 0.
+        if any(balance for _n, _k, balance, _r in accounts):
+            pen.text("B5", "Startsaldo (sum af konti)", font=FONT_BODY, size=10,
+                     bold=True, color=NAVY, align="left")
+            reference = "+".join("$%s.D%d" % (SHEET_ACCOUNTS, row)
+                                 for _n, _k, _b, row in accounts)
+            pen.formula("D5", "=%s" % reference, font=FONT_BODY, size=10,
+                       color=DARK, align="right", fmt=self.formats.currency)
+        else:
+            pen.text("B5", "Startsaldo", font=FONT_BODY, size=10, bold=True,
+                     color=NAVY, align="left")
+            pen.number("D5", start_balance or 0.0, font=FONT_BODY, size=10,
+                       color=DARK, align="right", bg=PEACH, fmt=self.formats.currency)
         pen.merge("B6:C6")
         pen.text("B6", "Netto pr. måned som nu", font=FONT_BODY, size=10,
                  color=TEXT_GREY, align="left")
@@ -1116,9 +1322,52 @@ class BudgetWorkbook(object):
 
         last_row = head + FORECAST_MONTHS
         self._add_forecast_chart(sheet, head, last_row)
-        self._print_setup(sheet, 7, last_row + 24)
+        account_end = self._write_account_forecast(pen, last_row + 26, plan_rows)
+        self._print_setup(sheet, 7, max(last_row + 24, account_end))
         self._freeze(sheet, 0, head)
         return last_row
+
+    def _write_account_forecast(self, pen, start_row, plan_rows):
+        """A small table: each account's balance in 12/24 months."""
+        account_rows = plan_rows.get("accounts") or {}
+        accounts = [a for a in self._scan_accounts() if a[0] in account_rows]
+        if not accounts:
+            return start_row
+
+        pen.merge("B%d:F%d" % (start_row, start_row))
+        pen.text("B%d" % start_row, "Konti - forventet udvikling", font=FONT_TITLE,
+                 size=14, bold=True, color=ORANGE, align="left")
+        pen.merge("B%d:F%d" % (start_row + 1, start_row + 1))
+        pen.text("B%d" % (start_row + 1),
+                 "Netto/md kommer fra kategoriernes Konto-kolonne i "
+                 "\"%s\"." % SHEET_PLAN, font=FONT_BODY, size=9, italic=True,
+                 color=MUTED, align="left")
+
+        header = start_row + 2
+        for column, title in (("B", "Konto"), ("C", "Nu"), ("D", "Netto/md"),
+                              ("E", "Om 12 md"), ("F", "Om 24 md")):
+            pen.text("%s%d" % (column, header), title, font=FONT_BODY, size=10,
+                     bold=True, color=NAVY,
+                     align="left" if column == "B" else "right")
+
+        row = header
+        for name, _kind, _balance, account_row in accounts:
+            row += 1
+            pen.text("B%d" % row, name, font=FONT_BODY, size=10, color=DARK,
+                     align="left")
+            pen.formula("C%d" % row, "=$%s.D%d" % (SHEET_ACCOUNTS, account_row),
+                        font=FONT_BODY, size=10, color=DARK, align="right",
+                        fmt=self.formats.currency)
+            pen.formula("D%d" % row, _account_net_formula(account_rows[name]),
+                        font=FONT_BODY, size=10, bold=True, color=NAVY,
+                        align="right", fmt=self.formats.signed)
+            pen.formula("E%d" % row, "=C%d+D%d*12" % (row, row), font=FONT_BODY,
+                        size=10, color=MUTED, align="right",
+                        fmt=self.formats.currency)
+            pen.formula("F%d" % row, "=C%d+D%d*24" % (row, row), font=FONT_BODY,
+                        size=10, color=MUTED, align="right",
+                        fmt=self.formats.currency)
+        return row + 1
 
     def _add_forecast_chart(self, sheet, header_row, last_row):
         """A line chart of the two balance columns."""
@@ -1306,6 +1555,76 @@ class BudgetWorkbook(object):
         self.set_rules(existing)
         return existing
 
+    # -- Bankbudget (a printable snapshot) ---------------------------------
+    def write_bank_budget(self, sheet, targets):
+        """A clean, printable snapshot of the current Mål column - for the bank.
+
+        Values are written as plain numbers, not formulas: this sheet is a
+        frozen copy of "Budgetforslag" at the moment you asked for it, so it
+        can be handed to someone else without changing under them.
+        """
+        pen = self.pen(sheet)
+        pen.column_widths({0: 4.0, 1: 40.0, 2: 16.0, 3: 4.0})
+
+        pen.merge("B2:C2")
+        pen.text("B2", "Husstandsbudget", font=FONT_TITLE, size=20, bold=True,
+                 color=ORANGE, align="left")
+        pen.merge("B3:C3")
+        pen.text("B3", "Øjebliksbillede af målene i \"%s\" pr. %s. Opdateres "
+                       "ikke automatisk - kør \"Budget ▸ Opret bankbudget\" "
+                       "igen, hvis du retter dine mål."
+                       % (SHEET_PLAN, datetime.date.today().strftime("%d-%m-%Y")),
+                 font=FONT_BODY, size=9, italic=True, color=MUTED, align="left",
+                 wrap=True, valign="center")
+        pen.row_height(3, 40)
+
+        income = sorted(((name, value) for (kind, name), value in targets.items()
+                         if kind == KIND_INCOME and value),
+                        key=lambda item: item[1], reverse=True)
+        expenses = sorted(((name, value) for (kind, name), value in targets.items()
+                           if kind == KIND_EXPENSE and value),
+                          key=lambda item: item[1], reverse=True)
+        income_total = sum(value for _name, value in income)
+        expense_total = sum(value for _name, value in expenses)
+
+        row = 5
+        row = self._bank_section(pen, row, "Indtægter pr. måned", income,
+                                 income_total)
+        row += 1
+        row = self._bank_section(pen, row, "Udgifter pr. måned", expenses,
+                                 expense_total)
+        row += 1
+        pen.text("B%d" % row, "Rådighedsbeløb / opsparing",
+                 font=FONT_BODY, size=11, bold=True, color=WHITE, bg=NAVY,
+                 align="left")
+        pen.number("C%d" % row, income_total - expense_total, font=FONT_BODY,
+                   size=12, bold=True, color=WHITE, bg=NAVY, align="right",
+                   fmt=self.formats.signed)
+
+        self._print_setup(sheet, 2, row + 2)
+        self._freeze(sheet, 0, 4)
+        return row
+
+    def _bank_section(self, pen, row, title, items, total):
+        pen.text("B%d" % row, title, font=FONT_BODY, size=13, bold=True,
+                 color=NAVY, align="left")
+        row += 1
+        if not items:
+            pen.text("B%d" % row, "(ingen)", font=FONT_BODY, size=10, italic=True,
+                     color=MUTED, align="left")
+            row += 1
+        for name, value in items:
+            pen.text("B%d" % row, name, font=FONT_BODY, size=10, color=DARK,
+                     align="left")
+            pen.number("C%d" % row, value, font=FONT_BODY, size=10, color=DARK,
+                       align="right", fmt=self.formats.currency)
+            row += 1
+        pen.text("B%d" % row, "%s - i alt" % title, font=FONT_BODY, size=10,
+                 bold=True, color=NAVY, align="left")
+        pen.number("C%d" % row, total, font=FONT_BODY, size=10, bold=True,
+                   color=NAVY, align="right", fmt=self.formats.currency)
+        return row + 1
+
     # -- reading an existing document -------------------------------------
     def has_budget(self):
         return self.doc.Sheets.hasByName(SHEET_TX)
@@ -1417,6 +1736,10 @@ class BudgetWorkbook(object):
         months = summary.months or [""]
         targets = self.read_targets()
         forecast_start = self.read_forecast_start()
+        # Read back before the old sheet is torn down below - the whole
+        # point is to carry these across the rebuild.
+        category_accounts = self.read_category_accounts()
+        plan_accounts = self.read_plan_accounts()
         self.doc.lockControllers()
         try:
             for index in range(self.doc.Sheets.Count - 1, -1, -1):
@@ -1426,11 +1749,16 @@ class BudgetWorkbook(object):
                                                                SHEET_FORECAST):
                     self.doc.Sheets.removeByName(name)
 
-            plan = build_plan(summary) if len(summary.months) > 1 else None
+            self._ensure_accounts_sheet()
+            plan = build_plan(summary, transactions) if len(summary.months) > 1 else None
             if plan is not None:
-                plan_rows = self.write_plan(self.sheet(SHEET_PLAN), plan, targets)
+                plan_rows = self.write_plan(self.sheet(SHEET_PLAN), plan, targets,
+                                            accounts=category_accounts,
+                                            plan_accounts=plan_accounts)
                 if forecast_start is None:
-                    forecast_start = (start_balance or 0.0) + summary.net
+                    accounts_total = self._accounts_total()
+                    forecast_start = (accounts_total if accounts_total else
+                                      (start_balance or 0.0) + summary.net)
                 self.write_forecast(self.sheet(SHEET_FORECAST), plan, plan_rows,
                                     forecast_start)
             previous = None
@@ -1547,6 +1875,37 @@ def _unique(names):
 
 def _round_500(value):
     return round(value / 500.0) * 500 if value else 0.0
+
+
+def _format_kr(value):
+    return "{:,.0f}".format(abs(value)).replace(",", ".") + " kr."
+
+
+def _plan_comment(entry):
+    """Hover text listing the transactions behind one Budgetforslag row."""
+    if not entry.transaction_count:
+        return ""
+    lines = ["%d postering(er) i alt - gennemsnit %s/md."
+             % (entry.transaction_count, _format_kr(entry.mean_all))]
+    if entry.sample:
+        lines.append("")
+        lines.append("Største bidrag:")
+        for t in entry.sample:
+            lines.append("%s  %-26s %10s" % (t.date.strftime("%d-%m-%Y"),
+                                             t.text[:26], _format_kr(t.amount)))
+        extra = entry.transaction_count - len(entry.sample)
+        if extra > 0:
+            lines.append("... og %d flere" % extra)
+    return "\n".join(lines)
+
+
+def _account_net_formula(rows_signs):
+    """Formula: sum of Budgetforslag Mål cells assigned to one account."""
+    if not rows_signs:
+        return "=0"
+    parts = ["%s$%s.H%d" % ("+" if sign > 0 else "-", SHEET_PLAN, row)
+             for row, sign in rows_signs]
+    return "=" + "".join(parts)
 
 
 def _next_month(month_key):

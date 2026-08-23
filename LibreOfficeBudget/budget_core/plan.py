@@ -19,11 +19,15 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional, Sequence
 
-from .budget import KIND_EXPENSE, KIND_INCOME, Summary
+from .budget import KIND_EXPENSE, KIND_INCOME, Summary, Transaction
 from .textutils import fold
 
 __all__ = ["CategoryPlan", "BudgetPlan", "build_plan", "GROUP_FIXED",
-           "GROUP_VARIABLE", "GROUP_PERIODIC", "GROUP_LABELS"]
+           "GROUP_VARIABLE", "GROUP_PERIODIC", "GROUP_LABELS", "SAMPLE_SIZE"]
+
+# How many contributing transactions to remember per category (for the
+# on-hover comment in the spreadsheet).
+SAMPLE_SIZE = 8
 
 GROUP_FIXED = "fast"
 GROUP_VARIABLE = "variabel"
@@ -100,9 +104,11 @@ class CategoryPlan(object):
 
     __slots__ = ("kind", "category", "group", "values", "months_present",
                  "total", "mean_all", "mean_active", "median", "low", "high",
-                 "variation", "suggestion")
+                 "variation", "suggestion", "sample", "transaction_count",
+                 "account")
 
-    def __init__(self, kind: str, category: str, values: Sequence[float]):
+    def __init__(self, kind: str, category: str, values: Sequence[float],
+                 transactions: Sequence[Transaction] = ()):
         self.kind = kind
         self.category = category
         self.values = [abs(v) for v in values]
@@ -119,6 +125,11 @@ class CategoryPlan(object):
         self.variation = (_stdev(active) / self.mean_active) if self.mean_active else 0.0
         self.group = GROUP_VARIABLE
         self.suggestion = 0.0
+        self.account = ""
+
+        ordered = sorted(transactions, key=lambda t: abs(t.amount), reverse=True)
+        self.sample = ordered[:SAMPLE_SIZE]
+        self.transaction_count = len(transactions)
 
     @property
     def coverage(self) -> float:
@@ -227,15 +238,27 @@ class BudgetPlan(object):
         return lines
 
 
-def build_plan(summary: Summary, months: Optional[Sequence[str]] = None) -> BudgetPlan:
-    """Build a draft budget from a :class:`~budget_core.budget.Summary`."""
+def build_plan(summary: Summary, transactions: Sequence[Transaction] = (),
+              months: Optional[Sequence[str]] = None) -> BudgetPlan:
+    """Build a draft budget from a :class:`~budget_core.budget.Summary`.
+
+    ``transactions`` (the same list used to build ``summary``) lets each
+    category remember its largest contributing transactions, for the
+    on-hover comment shown in the spreadsheet.
+    """
     months = list(months or summary.months)
+    by_category: Dict[tuple, List[Transaction]] = {}
+    for t in transactions:
+        if t.month in months:
+            by_category.setdefault((t.kind, t.category), []).append(t)
+
     categories: List[CategoryPlan] = []
     for kind, names in ((KIND_INCOME, summary.income_categories),
                         (KIND_EXPENSE, summary.expense_categories)):
         for name in names:
             values = [summary.value(kind, name, month) for month in months]
-            plan = CategoryPlan(kind, name, values)
+            plan = CategoryPlan(kind, name, values,
+                                by_category.get((kind, name), ()))
             plan.group = _classify(plan)
             plan.suggestion = _suggest(plan)
             categories.append(plan)

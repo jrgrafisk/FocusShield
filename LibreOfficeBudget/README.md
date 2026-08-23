@@ -131,9 +131,11 @@ Tre måder, alt efter hvor meget du vil gøre:
 1. **Rullelisten i Transaktioner** — vælg kategori direkte i kolonnen
    Kategori. Oversigterne opdaterer sig selv.
 2. **`Budget ▸ Kategorisér poster uden kategori…`** — en liste over alle
-   ukendte posteringer (samlet pr. forretning, med antal og beløb). Marker en
-   eller flere, vælg eller skriv en kategori, tryk **Tildel**. Sæt flueben i
-   "Gem som regel", så kender den forretningen næste gang.
+   ukendte posteringer (samlet pr. forretning, med antal og beløb — beløb,
+   korttype, dato og notanummer indgår ikke i grupperingen eller reglen).
+   Marker en eller flere, vælg eller skriv en kategori, tryk **Tildel**. Sæt
+   flueben i "Gem som regel", så virker den med det samme på *alle*
+   posteringer, der matcher — ikke kun dem du lige markerede.
 3. **`Budget ▸ Kategorier - opret, omdøb, slet…`** — opret en ny kategori,
    omdøb en (posteringer, regler og lister følger med) eller slet en
    (posteringerne bliver ukategoriserede igen, så du kan sætte dem et andet
@@ -155,6 +157,9 @@ bevares. Reglerne gemmes samtidig i din brugerprofil
 * Skriv `re:` foran for et regulært udtryk, fx `re:faktura\s*\d+`.
 * En kategori, du selv har valgt i rullelisten, bliver ikke overskrevet af en
   regel, der alligevel ikke rammer noget.
+* Ord om *hvordan* der er betalt (Dankort, Debitkort, Visa, kortnota,
+  kortkøb...) springes altid over, når et nøgleord foreslås — det er meget
+  sjældent, at kort-typen er det, der reelt kendetegner en postering.
 
 ### Andre kommandoer i menuen
 
@@ -222,7 +227,7 @@ Der skrives `<navn>_kategoriseret.csv` (med kategori, type og måned) og
 ## Test
 
 ```bash
-python3 -m unittest discover -s tests      # 61 test, ingen LibreOffice nødvendig
+python3 -m unittest discover -s tests      # 63 test, ingen LibreOffice nødvendig
 
 # ende-til-ende mod en kørende LibreOffice:
 soffice --headless --norestore --accept="socket,host=localhost,port=2002;urp;" &

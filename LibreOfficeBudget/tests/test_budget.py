@@ -24,6 +24,7 @@ from budget_core.merchant import merchant_key, merchant_name, rule_keyword
 from budget_core.plan import (GROUP_FIXED, GROUP_PERIODIC, GROUP_VARIABLE,
                               build_plan)
 from budget_core.rules import DEFAULT_CATEGORY, RuleSet
+from budget_core.textutils import fold
 
 DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
@@ -418,6 +419,34 @@ class MerchantTests(unittest.TestCase):
         self.assertEqual(merchant_name("Visa kortkøb WOLT DANMARK 245,00 DKK"),
                          "WOLT DANMARK")
         self.assertEqual(merchant_name("FØTEX 1234 – Dankort-nota 998877"), "FØTEX")
+
+    def test_card_type_is_never_the_rule(self):
+        """A rule almost never makes sense based on which card was used."""
+        cases = [
+            ("Debitkort NETTO 8021 KØBENHAVN", "NETTO", "NETTO KØBENHAVN"),
+            ("NETTO 8021 KØBENHAVN Debitkort-nota 4711", "NETTO",
+             "NETTO KØBENHAVN"),
+            ("DEBITKORT-NOTA WOLT DANMARK 245,00", "WOLT DANMARK",
+             "WOLT DANMARK"),
+            ("Visa/Dankort CIRCLE K AMAGER", "CIRCLE K AMAGER",
+             "CIRCLE K AMAGER"),
+            ("Kortkøbsnota 12345 FØTEX NØRREBRO", "FØTEX NØRREBRO",
+             "FØTEX NØRREBRO"),
+            ("Betaling m/ debitkort - MENY SLAGELSE", "MENY SLAGELSE",
+             "MENY SLAGELSE"),
+            ("Hævekort BILKA FIELDS", "BILKA FIELDS", "BILKA FIELDS"),
+        ]
+        for text, keyword, name in cases:
+            self.assertEqual(rule_keyword(text), keyword, text)
+            self.assertEqual(merchant_name(text), name, text)
+            for card_word in ("kort", "debit", "visa", "dankort", "hæve"):
+                self.assertNotIn(card_word, fold(rule_keyword(text)), text)
+                self.assertNotIn(card_word, fold(merchant_name(text)), text)
+
+    def test_single_letter_shop_name_is_not_noise(self):
+        """"K" in "Circle K" must survive - it is part of the actual name."""
+        self.assertEqual(rule_keyword("Kortkøb 21.05 CIRCLE K AMAGER"),
+                         "CIRCLE K AMAGER")
 
     def test_same_shop_same_group(self):
         first = "Dankort-nota 4711 NETTO 8021 KØBENHAVN 21.05 kl. 17.42"

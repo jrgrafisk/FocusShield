@@ -336,6 +336,56 @@ def check_plan_sheets(context, csv_path):
           model.getByName("category").Dropdown, True)
     dialog.dispose()
 
+    # -- a saved rule must apply to every matching posting, not just the
+    # group that was selected in the dialog (regression: assign_dialog used
+    # to call rebuild() instead of refresh(), so only the manually picked
+    # rows got the category and everything else stayed uncategorised) -----
+    festival_table = csvsniff.Table.from_rows([
+        ["Dato", "Tekst", "Beløb"],
+        ["01-05-2025", "Dankort-nota 111 Festival Food Roskilde 01.05", "-120,00"],
+        ["05-05-2025", "Dankort-nota 222 Festival Food Aarhus 05.05", "-95,00"],
+        ["09-05-2025", "Dankort-nota 333 Festival Food Odense 09.05", "-140,00"],
+        ["15-05-2025", "Løn maj", "28000,00"],
+    ])
+    festival_mapping = detect_mapping(festival_table)
+    festival_result = build_transactions(
+        festival_table, festival_mapping, RuleSet.defaults(),
+        BuildOptions(decimal=festival_mapping.decimal,
+                    dayfirst=festival_mapping.dayfirst))
+    festival_doc = new_calc(context)
+    festival_workbook = budget_office.BudgetWorkbook(festival_doc)
+    festival_workbook.build(festival_result, RuleSet.defaults(), start_balance=0.0)
+
+    festival_groups = festival_workbook.uncategorised_groups()
+    check("tre forskellige Festival-grupper (forskellig by)",
+          sum(1 for g in festival_groups if "Festival" in g[0]), 3)
+
+    picked = next(g for g in festival_groups if "Festival" in g[0])
+    festival_state = {
+        "assigned": [(picked[3], "Levning")],
+        "rules": [("Festival", "Levning")],
+    }
+    assigned, rules_saved, changed = job.commit_assignments(festival_workbook,
+                                                            festival_state)
+    check("dialogens commit rapporterer regelantal", rules_saved, 1)
+    check("refresh rammer de andre Festival-poster (ikke kun den valgte)",
+          changed >= 2, True)
+
+    festival_tx = festival_doc.Sheets.getByName(budget_office.SHEET_TX)
+    festival_categories = set()
+    for row in range(budget_office.TX_FIRST_ROW, budget_office.TX_FIRST_ROW + 3):
+        text = festival_tx.getCellByPosition(budget_office.COL_EXP_TEXT, row).getString()
+        if "Festival" in text:
+            festival_categories.add(
+                festival_tx.getCellByPosition(budget_office.COL_EXP_CAT, row)
+                .getString())
+    check("alle Festival-posteringer fik samme kategori fra reglen",
+          festival_categories, {"Levning"})
+    check("ingen Festival-gruppe er tilbage som ukategoriseret",
+          any("Festival" in g[0] for g in festival_workbook.uncategorised_groups()),
+          False)
+    festival_doc.close(False)
+
     doc.close(False)
 
 

@@ -294,6 +294,22 @@ class BudgetJob(unohelper.Base, XJobExecutor):
 
         if not state["assigned"]:
             return
+        assigned, rules, changed = self.commit_assignments(workbook, state)
+        self.message("Kategorisér poster",
+                     "%d posteringsgruppe(r) fik en kategori direkte.\n"
+                     "%d ny(e) regel(er) blev gemt og anvendt.\n"
+                     "%d postering(er) i alt fik en kategori fra reglerne."
+                     % (assigned, rules, changed))
+
+    def commit_assignments(self, workbook, state):
+        """Apply an assign-dialog result: write it, save the rules, and -
+        crucially - re-run every posting through the updated rules, not
+        just the groups that were selected in the dialog.
+
+        Split out from :meth:`assign_dialog` so it can be exercised without
+        driving the modal dialog. Returns
+        ``(assigned_count, rule_count, changed_count)``.
+        """
         doc = workbook.doc
         doc.lockControllers()
         try:
@@ -306,16 +322,14 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         finally:
             doc.unlockControllers()
         rows = workbook.read_rules()
+        ruleset = RuleSet(rows) if rows else load_rules()
         if rows:
             try:
-                RuleSet(rows).save(user_rules_path())
+                ruleset.save(user_rules_path())
             except Exception:
                 pass
-        workbook.rebuild()
-        self.message("Kategorisér poster",
-                     "%d posteringsgruppe(r) fik en kategori.\n"
-                     "%d ny(e) regel(er) blev gemt."
-                     % (len(state["assigned"]), len(state["rules"])))
+        _summary, changed = workbook.refresh(ruleset)
+        return len(state["assigned"]), len(state["rules"]), changed
 
     def _assign_dialog_controls(self, state, categories):
         model = self.create("com.sun.star.awt.UnoControlDialogModel")

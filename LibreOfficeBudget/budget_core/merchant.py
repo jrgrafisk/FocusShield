@@ -27,13 +27,17 @@ __all__ = ["merchant_name", "merchant_key", "rule_keyword"]
 NOISE_WORDS = frozenset((
     "dankort", "nota", "dankortnota", "kortkob", "kortkoeb", "kort", "kortnr",
     "visa", "mastercard", "maestro", "eurocard", "kreditkort", "betalingskort",
+    "debitkort", "chipkort", "haevekort", "kontokort", "korttype",
+    "kortbetaling", "korttransaktion", "kortnota", "kortholder",
+    "kortoplysninger", "kortkobsnota",
     "bs", "pbs", "betaling", "betalingsservice", "indbetalingskort",
     "ref", "refnr", "reference", "referencenr", "id", "idnr", "nr", "no",
     "kl", "den", "d", "dato", "tid", "kvittering", "bilag", "faktura", "fakt",
     "kob", "koeb", "purchase", "payment", "pos", "atm", "automat", "netbank",
     "mobilbank", "onlinebank", "udland", "udl", "valutakurs", "kurs",
     "dk", "dkk", "sek", "nok", "eur", "usd", "gbp", "kr", "kroner",
-    "fra", "til", "med", "og", "af", "pa", "konto", "kontonr", "konto-nr",
+    "fra", "til", "med", "m", "v", "og", "af", "pa", "konto", "kontonr",
+    "konto-nr",
     "transaktion", "postering", "posteringstekst", "tekst", "note",
     "aut", "auto", "automatisk", "straks", "straksoverforsel",
 ))

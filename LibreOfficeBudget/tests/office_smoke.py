@@ -22,10 +22,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "office"))
+sys.path.insert(0, os.path.join(ROOT, "oxt"))
 
 import uno  # noqa: E402
 import unohelper  # noqa: E402
 
+import budget_extension  # noqa: E402
 import budget_office  # noqa: E402
 from budget_core import csvsniff  # noqa: E402
 from budget_core.budget import (BuildOptions, KIND_EXPENSE,  # noqa: E402
@@ -176,6 +178,27 @@ def main(argv):
     if ferie_row:
         check("beløb flyttet til Ferie",
               june.getCellRangeByName("E%d" % ferie_row).getValue(), 2450.0)
+
+    # -- import dialog ---------------------------------------------------
+    def create(name):
+        return context.ServiceManager.createInstanceWithContext(name, context)
+
+    model = budget_extension.build_options_model(create, table, mapping,
+                                                 os.path.basename(path))
+    check("dialogen har alle felter",
+          all(model.hasByName(n) for n in ("date", "text1", "amount",
+                                           "amount_in", "decimal", "dayfirst",
+                                           "sign", "suggest", "ok", "cancel")),
+          True)
+    check("datokolonnen er valgt på forhånd",
+          model.getByName("date").SelectedItems[0], mapping.date + 1)
+    check("knappen er en OK-knap", model.getByName("ok").PushButtonType, 1)
+    settings = budget_extension.read_options_model(model)
+    check("dialogen giver samme kolonnevalg", settings["date"], mapping.date)
+    check("dialogen giver samme beløbskolonne", settings["amount"],
+          mapping.amount)
+    check("dialogen giver samme decimaltegn", settings["decimal"],
+          mapping.decimal)
 
     # -- save ------------------------------------------------------------
     out = os.path.join(os.path.dirname(path), "budget_smoke.ods")

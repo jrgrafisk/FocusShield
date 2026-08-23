@@ -312,80 +312,7 @@ class BudgetJob(unohelper.Base, XJobExecutor):
 
         Returns a settings dict, or ``None`` when the user cancels.
         """
-        names = table.header_names()
-        choices = [NONE_LABEL] + names
-
-        model = self.create("com.sun.star.awt.UnoControlDialogModel")
-        model.Width = 260
-        model.Height = 214
-        model.Title = "Importér til budget"
-
-        def add(kind, name, x, y, w, h, **props):
-            control = model.createInstance(
-                "com.sun.star.awt.UnoControl%sModel" % kind)
-            model.insertByName(name, control)
-            control.PositionX, control.PositionY = x, y
-            control.Width, control.Height = w, h
-            for key, value in props.items():
-                try:
-                    setattr(control, key, value)
-                except Exception:
-                    pass
-            return control
-
-        def listbox(name, x, y, w, items, selected):
-            control = add("ListBox", name, x, y, w, 12, Dropdown=True)
-            control.StringItemList = tuple(items)
-            _select(control, selected)
-            return control
-
-        def label(name, x, y, w, h, text, **props):
-            return add("FixedText", name, x, y, w, h, Label=text, **props)
-
-        info = "%s: %s" % (source_name, table.describe())
-        label("info", 6, 6, 248, 18, info, MultiLine=True)
-
-        label("l_date", 6, 30, 60, 10, "Datokolonne:")
-        listbox("date", 70, 28, 90, choices, _index(mapping.date))
-        label("l_dayfirst", 168, 30, 34, 10, "Format:")
-        listbox("dayfirst", 204, 28, 50,
-                             ["DD-MM-ÅÅÅÅ", "MM-DD-ÅÅÅÅ"],
-                             0 if mapping.dayfirst else 1)
-
-        label("l_text", 6, 48, 60, 10, "Tekstkolonne:")
-        listbox("text1", 70, 46, 90, choices,
-                _index(mapping.text[0] if mapping.text else None))
-        label("l_text2", 168, 48, 34, 10, "+ tekst:")
-        listbox("text2", 204, 46, 50, choices,
-                _index(mapping.text[1] if len(mapping.text) > 1 else None))
-
-        label("l_amount", 6, 66, 60, 10, "Beløbskolonne:")
-        listbox("amount", 70, 64, 90, choices, _index(mapping.amount))
-        label("l_decimal", 168, 66, 34, 10, "Decimal:")
-        listbox("decimal", 204, 64, 50, ["Komma (1.234,56)", "Punktum (1,234.56)"],
-                0 if (mapping.decimal or ",") == "," else 1)
-
-        label("l_in", 6, 84, 60, 10, "Eller indsat:")
-        listbox("amount_in", 70, 82, 90, choices, _index(mapping.amount_in))
-        label("l_out", 168, 84, 34, 10, "hævet:")
-        listbox("amount_out", 204, 82, 50, choices, _index(mapping.amount_out))
-
-        label("l_sign", 6, 102, 60, 10, "Fortegn:")
-        listbox("sign", 70, 100, 184, [text for _key, text in SIGN_CHOICES], 0)
-
-        add("CheckBox", "suggest", 70, 118, 184, 10,
-            Label="Foreslå budgettal ud fra gennemsnittet pr. måned", State=1)
-
-        preview = _preview_text(table, mapping)
-        label("preview", 6, 134, 248, 46, preview, MultiLine=True)
-
-        notes = "\n".join(mapping.notes[:2]) if mapping.notes else ""
-        label("notes", 6, 178, 248, 18, notes, MultiLine=True)
-
-        add("Button", "ok", 146, 198, 52, 14, Label="Opret budget", PushButtonType=1,
-            DefaultButton=True)
-        add("Button", "cancel", 202, 198, 52, 14, Label="Annullér", PushButtonType=2)
-
+        model = build_options_model(self.create, table, mapping, source_name)
         dialog = self.create("com.sun.star.awt.UnoControlDialog")
         dialog.setModel(model)
         dialog.setVisible(False)
@@ -393,23 +320,7 @@ class BudgetJob(unohelper.Base, XJobExecutor):
         try:
             if dialog.execute() != 1:
                 return None
-            get = lambda name: model.getByName(name)
-            text_columns = []
-            for name in ("text1", "text2"):
-                index = _selected(get(name)) - 1
-                if index >= 0 and index not in text_columns:
-                    text_columns.append(index)
-            settings = {
-                "date": _or_none(_selected(get("date")) - 1),
-                "text": text_columns,
-                "amount": _or_none(_selected(get("amount")) - 1),
-                "amount_in": _or_none(_selected(get("amount_in")) - 1),
-                "amount_out": _or_none(_selected(get("amount_out")) - 1),
-                "decimal": "," if _selected(get("decimal")) == 0 else ".",
-                "dayfirst": _selected(get("dayfirst")) == 0,
-                "sign": SIGN_CHOICES[max(0, _selected(get("sign")))][0],
-                "suggest": bool(get("suggest").State),
-            }
+            settings = read_options_model(model)
         finally:
             dialog.dispose()
 
@@ -472,6 +383,103 @@ def _preview_text(table, mapping):
                 parts.append(row[index])
         lines.append("  " + "   ".join(part.strip() for part in parts if part))
     return "\n".join(lines)
+
+
+def build_options_model(create, table, mapping, source_name):
+    """Build the import dialog (as a model, so it can be tested headlessly)."""
+    choices = [NONE_LABEL] + table.header_names()
+
+    model = create("com.sun.star.awt.UnoControlDialogModel")
+    model.Width = 260
+    model.Height = 214
+    model.Title = "Importér til budget"
+
+    def add(kind, name, x, y, w, h, **props):
+        control = model.createInstance("com.sun.star.awt.UnoControl%sModel" % kind)
+        model.insertByName(name, control)
+        control.PositionX, control.PositionY = x, y
+        control.Width, control.Height = w, h
+        for key, value in props.items():
+            try:
+                setattr(control, key, value)
+            except Exception:
+                pass
+        return control
+
+    def listbox(name, x, y, w, items, selected):
+        control = add("ListBox", name, x, y, w, 12, Dropdown=True)
+        control.StringItemList = tuple(items)
+        _select(control, selected)
+        return control
+
+    def label(name, x, y, w, h, text, **props):
+        return add("FixedText", name, x, y, w, h, Label=text, **props)
+
+    label("info", 6, 6, 248, 18, "%s: %s" % (source_name, table.describe()),
+          MultiLine=True)
+
+    label("l_date", 6, 30, 60, 10, "Datokolonne:")
+    listbox("date", 70, 28, 90, choices, _index(mapping.date))
+    label("l_dayfirst", 168, 30, 34, 10, "Format:")
+    listbox("dayfirst", 204, 28, 50, ["DD-MM-ÅÅÅÅ", "MM-DD-ÅÅÅÅ"],
+            0 if mapping.dayfirst else 1)
+
+    label("l_text", 6, 48, 60, 10, "Tekstkolonne:")
+    listbox("text1", 70, 46, 90, choices,
+            _index(mapping.text[0] if mapping.text else None))
+    label("l_text2", 168, 48, 34, 10, "+ tekst:")
+    listbox("text2", 204, 46, 50, choices,
+            _index(mapping.text[1] if len(mapping.text) > 1 else None))
+
+    label("l_amount", 6, 66, 60, 10, "Beløbskolonne:")
+    listbox("amount", 70, 64, 90, choices, _index(mapping.amount))
+    label("l_decimal", 168, 66, 34, 10, "Decimal:")
+    listbox("decimal", 204, 64, 50, ["Komma (1.234,56)", "Punktum (1,234.56)"],
+            0 if (mapping.decimal or ",") == "," else 1)
+
+    label("l_in", 6, 84, 60, 10, "Eller indsat:")
+    listbox("amount_in", 70, 82, 90, choices, _index(mapping.amount_in))
+    label("l_out", 168, 84, 34, 10, "hævet:")
+    listbox("amount_out", 204, 82, 50, choices, _index(mapping.amount_out))
+
+    label("l_sign", 6, 102, 60, 10, "Fortegn:")
+    listbox("sign", 70, 100, 184, [text for _key, text in SIGN_CHOICES], 0)
+
+    add("CheckBox", "suggest", 70, 118, 184, 10,
+        Label="Foreslå budgettal ud fra gennemsnittet pr. måned", State=1)
+
+    label("preview", 6, 134, 248, 46, _preview_text(table, mapping),
+          MultiLine=True)
+    label("notes", 6, 178, 248, 18,
+          "\n".join(mapping.notes[:2]) if mapping.notes else "", MultiLine=True)
+
+    add("Button", "ok", 146, 198, 52, 14, Label="Opret budget", PushButtonType=1,
+        DefaultButton=True)
+    add("Button", "cancel", 202, 198, 52, 14, Label="Annullér", PushButtonType=2)
+    return model
+
+
+def read_options_model(model):
+    """Turn the dialog's state into the settings dict used by the import."""
+    def get(name):
+        return model.getByName(name)
+
+    text_columns = []
+    for name in ("text1", "text2"):
+        index = _selected(get(name)) - 1
+        if index >= 0 and index not in text_columns:
+            text_columns.append(index)
+    return {
+        "date": _or_none(_selected(get("date")) - 1),
+        "text": text_columns,
+        "amount": _or_none(_selected(get("amount")) - 1),
+        "amount_in": _or_none(_selected(get("amount_in")) - 1),
+        "amount_out": _or_none(_selected(get("amount_out")) - 1),
+        "decimal": "," if _selected(get("decimal")) == 0 else ".",
+        "dayfirst": _selected(get("dayfirst")) == 0,
+        "sign": SIGN_CHOICES[max(0, _selected(get("sign")))][0],
+        "suggest": bool(get("suggest").State),
+    }
 
 
 def _start_balance(table, mapping, result):

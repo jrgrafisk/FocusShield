@@ -48,21 +48,6 @@ Private Function ReadAllBytes(ByVal path As String) As Variant
     stream.Close
 End Function
 
-Private Function BytesStartWith(ByVal bytes() As Byte, ByVal prefix() As Byte) As Boolean
-    Dim i As Long
-    If UBound(bytes) < UBound(prefix) Then
-        BytesStartWith = False
-        Exit Function
-    End If
-    For i = LBound(prefix) To UBound(prefix)
-        If bytes(i) <> prefix(i) Then
-            BytesStartWith = False
-            Exit Function
-        End If
-    Next i
-    BytesStartWith = True
-End Function
-
 Private Function DecodeWithCharset(ByVal bytesVariant As Variant, ByVal charset As String) As String
     Dim stream As Object
     Set stream = CreateObject("ADODB.Stream")
@@ -348,7 +333,7 @@ End Function
 ' Header detection
 ' -----------------------------------------------------------------------
 
-Private Function LooksLikeHeader(ByVal row() As String, ByVal following As Collection) As Boolean
+Private Function LooksLikeHeader(ByRef row() As String, ByVal following As Collection) As Boolean
     EnsureHeaderWords
     Dim nonEmpty As New Collection, i As Long, cellVal As String
     For i = LBound(row) To UBound(row)
@@ -480,7 +465,7 @@ ContinueLoop:
     FindStart = 0
 End Function
 
-Private Function Uniquify(ByVal names() As String) As String()
+Private Function Uniquify(ByRef names() As String) As String()
     Dim seen As Object
     Set seen = CreateObject("Scripting.Dictionary")
     Dim out() As String, i As Long, nm As String
@@ -535,7 +520,7 @@ Public Function TableFromRows(ByVal rawRows As Collection, ByVal hasHeaderIn As 
     End If
 
     Dim useHeader As Boolean
-    Dim first As Variant
+    Dim first() As String
     first = body(1)
     If VarType(hasHeaderIn) = vbBoolean Then
         useHeader = hasHeaderIn

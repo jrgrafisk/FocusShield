@@ -57,3 +57,10 @@ Public Function HeaderName(ByVal index As Long) As String
     End If
     HeaderName = "Kolonne " & (index + 1)
 End Function
+
+Public Function Describe() As String
+    Dim delimName As String
+    If Delimiter = vbTab Then delimName = "TAB" Else delimName = Delimiter
+    Describe = Rows.Count & DK(" r~ae~kker, ") & nColumns & DK(" kolonner, tegns~ae~t ") & _
+              Encoding & DK(", skilletegn ") & delimName
+End Function

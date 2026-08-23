@@ -169,9 +169,10 @@ bevares. Reglerne gemmes samtidig i din brugerprofil
 * Skriv `re:` foran for et regulært udtryk, fx `re:faktura\s*\d+`.
 * En kategori, du selv har valgt i rullelisten, bliver ikke overskrevet af en
   regel, der alligevel ikke rammer noget.
-* Ord om *hvordan* der er betalt (Dankort, Debitkort, Visa, kortnota,
-  kortkøb...) springes altid over, når et nøgleord foreslås — det er meget
-  sjældent, at kort-typen er det, der reelt kendetegner en postering.
+* Ord om *hvordan* der er betalt (Dankort, Debitkort/Debitcard, Visa,
+  kortnota, kortkøb...) springes altid over, når et nøgleord foreslås — det
+  er meget sjældent, at kort-typen er det, der reelt kendetegner en
+  postering.
 
 ### Andre kommandoer i menuen
 

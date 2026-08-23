@@ -477,11 +477,15 @@ class MerchantTests(unittest.TestCase):
             ("Betaling m/ debitkort - MENY SLAGELSE", "MENY SLAGELSE",
              "MENY SLAGELSE"),
             ("Hævekort BILKA FIELDS", "BILKA FIELDS", "BILKA FIELDS"),
+            ("Debitcard GUF KUGLER FORRETNING 21.05", "GUF KUGLER FORRETNING",
+             "GUF KUGLER FORRETNING"),
+            ("Kreditcard NOTA 4711 SPOTIFY AB", "SPOTIFY AB", "SPOTIFY AB"),
         ]
         for text, keyword, name in cases:
             self.assertEqual(rule_keyword(text), keyword, text)
             self.assertEqual(merchant_name(text), name, text)
-            for card_word in ("kort", "debit", "visa", "dankort", "hæve"):
+            for card_word in ("kort", "card", "debit", "visa", "dankort",
+                               "hæve", "kredit"):
                 self.assertNotIn(card_word, fold(rule_keyword(text)), text)
                 self.assertNotIn(card_word, fold(merchant_name(text)), text)
 

@@ -24,12 +24,20 @@ from .textutils import fold, squeeze
 __all__ = ["merchant_name", "merchant_key", "rule_keyword"]
 
 # Words that say something about the payment, not about who was paid.
+# Banks write both the Danish "kort" and the English "card" spelling for
+# most of these ("Debitkort" vs "Debitcard"), so every compound is listed
+# in both forms.
 NOISE_WORDS = frozenset((
     "dankort", "nota", "dankortnota", "kortkob", "kortkoeb", "kort", "kortnr",
     "visa", "mastercard", "maestro", "eurocard", "kreditkort", "betalingskort",
     "debitkort", "chipkort", "haevekort", "kontokort", "korttype",
     "kortbetaling", "korttransaktion", "kortnota", "kortholder",
     "kortoplysninger", "kortkobsnota",
+    "kreditcard", "debitcard", "betalingscard", "chipcard", "bankcard",
+    "kontocard", "cardtype", "cardbetaling", "cardtransaktion", "cardnota",
+    "cardholder", "cardoplysninger", "cardkobsnota", "cardkob", "cardkoeb",
+    "cardnr", "card",
+    "americanexpress", "amex", "dinersclub", "diners", "jcb", "unionpay",
     "bs", "pbs", "betaling", "betalingsservice", "indbetalingskort",
     "ref", "refnr", "reference", "referencenr", "id", "idnr", "nr", "no",
     "kl", "den", "d", "dato", "tid", "kvittering", "bilag", "faktura", "fakt",

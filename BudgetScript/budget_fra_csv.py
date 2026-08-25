@@ -16,6 +16,9 @@ import traceback
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
+# openpyxl comes bundled in vendor/, so nothing needs to be pip-installed -
+# no command prompt required, just double-click start_budget.bat.
+sys.path.insert(0, os.path.join(ROOT, "vendor"))
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk

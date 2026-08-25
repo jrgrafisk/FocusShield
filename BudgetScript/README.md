@@ -10,25 +10,20 @@ Det er den samme motor (kategorisering, budgetklassificering osv.), som
 ligger bag LibreOffice-udvidelsen "Budget fra CSV" - bare uden nogen
 tilføjelse installeret i selve regnearksprogrammet.
 
-## Sådan installeres det (én gang)
+## Sådan installeres det (én gang, ingen kommandoprompt nødvendig)
 
 1. **Installér Python**, hvis du ikke allerede har det: hent den fra
    [python.org/downloads](https://www.python.org/downloads/) og kør
    installationsprogrammet. **Vigtigt:** sæt flueben i "Add python.exe to
    PATH" på den første side af installationsguiden.
-2. Åbn en kommandoprompt i den mappe, du har udpakket disse filer til
-   (Shift + højreklik i mappen ▸ "Åbn PowerShell-vindue her" eller
-   "Åbn kommandoprompt her"), og kør:
+2. Udpak zip-filen med disse filer et sted, du kan finde igen (fx
+   Dokumenter).
 
-   ```
-   py -3 -m pip install -r requirements.txt
-   ```
-
-   (Det installerer `openpyxl`, det eneste, scriptet har brug for udover
-   Python selv - `tkinter`, som viser vinduerne, følger med Python.)
-
-Det er det. Intet Trust Center, ingen makro-sikkerhedsadvarsler, ingen
-VBA-editor.
+Det er det - dobbeltklik `start_budget.bat` for at komme i gang (se
+nedenfor). Den nødvendige `openpyxl`-pakke følger allerede med i
+`vendor`-mappen, så der er intet at installere med `pip`. (`tkinter`, som
+viser selve vinduerne, følger med Python.) Intet Trust Center, ingen
+makro-sikkerhedsadvarsler, ingen VBA-editor, ingen kommandoprompt.
 
 ## Sådan bruges det
 
@@ -94,8 +89,12 @@ ikke længere med i budgettet.
 
 ## Fejlfinding
 
-- **"ModuleNotFoundError: No module named 'openpyxl'"**: kør
-  `py -3 -m pip install -r requirements.txt` i mappen med scriptet.
+- **"ModuleNotFoundError: No module named 'openpyxl'"**: `vendor`-mappen
+  (som indeholder openpyxl) mangler eller er ikke pakket ud sammen med de
+  andre filer - tjek at `vendor\openpyxl` findes i samme mappe som
+  `budget_fra_csv.py`. Er den der stadig ikke, kan du installere den
+  selv i stedet: åbn en kommandoprompt i mappen og kør
+  `py -3 -m pip install -r requirements.txt`.
 - **"py" er ikke genkendt som kommando**: Python blev sandsynligvis
   installeret uden "Add python.exe to PATH" - kør installationsprogrammet
   igen og sæt fluebenet, eller brug `python` i stedet for `py -3`.

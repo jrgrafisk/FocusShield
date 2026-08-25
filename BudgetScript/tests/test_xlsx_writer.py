@@ -12,6 +12,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "vendor"))
 
 from budget_core import csvsniff
 from budget_core.budget import BuildOptions, Summary, build_transactions

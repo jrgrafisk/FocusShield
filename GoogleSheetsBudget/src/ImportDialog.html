@@ -1,0 +1,265 @@
+<style>
+  body {
+    font-family: Calibri, "Segoe UI", Arial, sans-serif;
+    color: #434343;
+    margin: 0;
+    padding: 16px 20px;
+    font-size: 13px;
+  }
+  h1 {
+    font-size: 16px;
+    color: #F46524;
+    margin: 0 0 12px 0;
+  }
+  .step { display: none; }
+  .step.active { display: block; }
+  p.hint { color: #687887; margin: 4px 0 16px 0; }
+  input[type=file] {
+    display: block;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  table.fields { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  table.fields td { padding: 4px 0; vertical-align: middle; }
+  table.fields td.label { width: 150px; color: #334960; font-weight: bold; }
+  select { width: 100%; padding: 4px; font-size: 13px; }
+  .notes {
+    background: #FFF2ED;
+    border-left: 3px solid #F46524;
+    padding: 8px 10px;
+    margin: 12px 0;
+    color: #576475;
+    font-size: 12px;
+    white-space: pre-line;
+  }
+  .buttons { margin-top: 18px; text-align: right; }
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 7px 16px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  button.primary {
+    background: #F46524;
+    border-color: #F46524;
+    color: #fff;
+    font-weight: bold;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .spinner { color: #687887; font-style: italic; }
+  .error { color: #b03; white-space: pre-line; }
+  .message { white-space: pre-line; }
+  .describe { color: #687887; font-size: 12px; margin: -8px 0 14px 0; }
+</style>
+
+<h1><?= title ?></h1>
+
+<div id="step-upload" class="step active">
+  <p class="hint">Vælg CSV-filen med posteringer fra netbanken.</p>
+  <input type="file" id="fileInput" accept=".csv,.txt" />
+  <div class="buttons">
+    <button id="cancelUpload" onclick="google.script.host.close()">Annullér</button>
+    <button id="nextBtn" class="primary" disabled onclick="onNext()">Næste</button>
+  </div>
+</div>
+
+<div id="step-mapping" class="step">
+  <p class="describe" id="describeLine"></p>
+  <table class="fields">
+    <tr><td class="label">Dato:</td><td><select id="dateSel"></select></td></tr>
+    <tr><td class="label">Tekst:</td><td><select id="textSel"></select></td></tr>
+    <tr><td class="label">Beløb (én kolonne):</td><td><select id="amountSel"></select></td></tr>
+    <tr><td class="label">&nbsp;&nbsp;- eller Indbetalt:</td><td><select id="amountInSel"></select></td></tr>
+    <tr><td class="label">&nbsp;&nbsp;- og Hævet:</td><td><select id="amountOutSel"></select></td></tr>
+    <tr><td class="label">Decimaltegn:</td><td>
+      <select id="decimalSel">
+        <option value=",">komma (,)</option>
+        <option value=".">punktum (.)</option>
+      </select>
+    </td></tr>
+    <tr><td class="label">Datoformat:</td><td>
+      <select id="dayfirstSel">
+        <option value="true">dag før måned</option>
+        <option value="false">måned før dag</option>
+      </select>
+    </td></tr>
+  </table>
+  <div class="notes" id="notesBox" style="display:none;"></div>
+  <div class="buttons">
+    <button id="backBtn" onclick="showStep('upload')">Tilbage</button>
+    <button id="cancelMapping" onclick="google.script.host.close()">Annullér</button>
+    <button id="confirmBtn" class="primary" onclick="onConfirm()"><?= confirmLabel ?></button>
+  </div>
+</div>
+
+<div id="step-working" class="step">
+  <p class="spinner">Arbejder…</p>
+</div>
+
+<div id="step-done" class="step">
+  <p class="message" id="doneMessage"></p>
+  <div class="buttons">
+    <button class="primary" onclick="google.script.host.close()">Luk</button>
+  </div>
+</div>
+
+<div id="step-error" class="step">
+  <p class="error" id="errorMessage"></p>
+  <div class="buttons">
+    <button onclick="showStep('mapping')">Tilbage</button>
+    <button class="primary" onclick="google.script.host.close()">Luk</button>
+  </div>
+</div>
+
+<script>
+  var MODE = "<?= mode ?>";
+  var csvText = null;
+  var fileName = "";
+  var encodingLabel = "utf-8";
+  var lastMapping = null; // carries mapping.balance through to buildBudget
+
+  function showStep(name) {
+    document.querySelectorAll(".step").forEach(function (el) { el.classList.remove("active"); });
+    document.getElementById("step-" + name).classList.add("active");
+  }
+
+  document.getElementById("fileInput").addEventListener("change", function (e) {
+    document.getElementById("nextBtn").disabled = !e.target.files.length;
+  });
+
+  // Real bank exports are UTF-8, Windows-1252 or (occasionally, from older
+  // exports) UTF-16. Sniff a BOM first, then fall back to strict UTF-8,
+  // then Windows-1252 (which never fails to decode). Mirrors
+  // budget_core/csvsniff.py's detect_encoding, minus the UTF-32 case,
+  // which the Encoding API has no label for and which no real bank export
+  // has ever used in practice.
+  function decodeBytes(buffer) {
+    var bytes = new Uint8Array(buffer);
+    if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      return { text: new TextDecoder("utf-8").decode(bytes.subarray(3)), encoding: "utf-8-sig" };
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      return { text: new TextDecoder("utf-16le").decode(bytes.subarray(2)), encoding: "utf-16le" };
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+      return { text: new TextDecoder("utf-16be").decode(bytes.subarray(2)), encoding: "utf-16be" };
+    }
+    var head = bytes.subarray(0, Math.min(4096, bytes.length));
+    var nullCount = 0;
+    for (var i = 0; i < head.length; i++) { if (head[i] === 0) nullCount++; }
+    if (head.length && nullCount > head.length / 4) {
+      var evenNulls = 0;
+      for (var j = 0; j < head.length - 1; j += 2) { if (head[j] === 0) evenNulls++; }
+      var name = evenNulls > head.length / 5 ? "utf-16be" : "utf-16le";
+      try { return { text: new TextDecoder(name).decode(bytes), encoding: name }; } catch (e) { /* fall through */ }
+    }
+    try {
+      return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), encoding: "utf-8" };
+    } catch (e) { /* not valid utf-8 */ }
+    return { text: new TextDecoder("windows-1252").decode(bytes), encoding: "windows-1252" };
+  }
+
+  function onNext() {
+    var file = document.getElementById("fileInput").files[0];
+    if (!file) return;
+    fileName = file.name;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var decoded = decodeBytes(reader.result);
+      csvText = decoded.text;
+      encodingLabel = decoded.encoding;
+      showStep("working");
+      google.script.run
+        .withSuccessHandler(onMappingDetected)
+        .withFailureHandler(onServerError)
+        .detectCsvMapping(csvText, fileName, encodingLabel);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function fillOptions(select, headerNames, selectedIndex) {
+    select.innerHTML = "";
+    var noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.textContent = "(ingen)";
+    select.appendChild(noneOpt);
+    headerNames.forEach(function (name, i) {
+      var opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = i + ": " + name;
+      select.appendChild(opt);
+    });
+    select.value = selectedIndex === null || selectedIndex === undefined ? "" : String(selectedIndex);
+  }
+
+  function onMappingDetected(result) {
+    if (result.error) {
+      document.getElementById("errorMessage").textContent = result.error;
+      showStep("error");
+      return;
+    }
+    lastMapping = result.mapping;
+    document.getElementById("describeLine").textContent = fileName + " - " + result.describe;
+
+    fillOptions(document.getElementById("dateSel"), result.headerNames, result.mapping.date);
+    fillOptions(document.getElementById("textSel"), result.headerNames, result.mapping.text_index);
+    fillOptions(document.getElementById("amountSel"), result.headerNames, result.mapping.amount);
+    fillOptions(document.getElementById("amountInSel"), result.headerNames, result.mapping.amount_in);
+    fillOptions(document.getElementById("amountOutSel"), result.headerNames, result.mapping.amount_out);
+    document.getElementById("decimalSel").value = result.mapping.decimal === "." ? "." : ",";
+    document.getElementById("dayfirstSel").value = result.mapping.dayfirst ? "true" : "false";
+
+    var notesBox = document.getElementById("notesBox");
+    if (result.mapping.notes && result.mapping.notes.length) {
+      notesBox.style.display = "block";
+      notesBox.textContent = result.mapping.notes.join("\n");
+    } else {
+      notesBox.style.display = "none";
+    }
+    showStep("mapping");
+  }
+
+  function selVal(id) {
+    var v = document.getElementById(id).value;
+    return v === "" ? null : parseInt(v, 10);
+  }
+
+  function onConfirm() {
+    var amountIn = selVal("amountInSel");
+    var amountOut = selVal("amountOutSel");
+    var mappingObj = {
+      date: selVal("dateSel"),
+      text_index: selVal("textSel"),
+      amount: (amountIn !== null || amountOut !== null) ? null : selVal("amountSel"),
+      amount_in: amountIn,
+      amount_out: amountOut,
+      balance: lastMapping ? lastMapping.balance : null,
+      decimal: document.getElementById("decimalSel").value,
+      dayfirst: document.getElementById("dayfirstSel").value === "true",
+    };
+    showStep("working");
+    google.script.run
+      .withSuccessHandler(onBuildDone)
+      .withFailureHandler(onServerError)
+      .buildBudget(csvText, fileName, mappingObj, MODE);
+  }
+
+  function onBuildDone(result) {
+    if (result.error) {
+      document.getElementById("errorMessage").textContent = result.error;
+      showStep("error");
+      return;
+    }
+    document.getElementById("doneMessage").textContent = result.message;
+    showStep("done");
+  }
+
+  function onServerError(err) {
+    document.getElementById("errorMessage").textContent = "Der opstod en fejl:\n\n" + (err && err.message ? err.message : err);
+    showStep("error");
+  }
+</script>

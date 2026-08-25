@@ -16,8 +16,9 @@ ikke Excel til nettet).
 **Ingen udleveret `.xlam`-fil.** En Excel-tilføjelsesprograms kompilerede
 makro-lager (`vbaProject.bin`) kan kun genereres af Excel selv - det kan
 ikke bygges uden for et rigtigt Excel. Derfor leveres koden som almindelige
-VBA-kildefiler (`.bas`/`.cls`), som du importerer én gang i VBA-editoren
-(vejledning nedenfor). Det tager 5-10 minutter.
+VBA-kildefiler (`.bas`/`.cls`), som du importerer én gang i VBA-editoren -
+der er en installations-makro, der gør det meste af arbejdet for dig (se
+"Sådan installeres den" nedenfor). Tager et par minutter.
 
 **Ikke testet i et rigtigt Excel.** Koden er skrevet omhyggeligt og er en
 tro oversættelse af den LibreOffice-udvidelse, den er baseret på - men er
@@ -39,45 +40,69 @@ trykke "Opdatér kategorier og budget".
 
 ## Sådan installeres den (én gang)
 
+Der er 26 filer i `vba`-mappen. Du behøver **ikke** importere dem én ad
+gangen - der er en lille installations-makro (`_Installer.bas`), der gør
+resten for dig.
+
+### Trin 1: slå adgang til VBA-projektet til (én gang, i alle Excel-projekter)
+
+I Excel: **Filer ▸ Indstillinger ▸ Sikkerhedscenter ▸ Indstillinger for
+Sikkerhedscenter… ▸ Makroindstillinger** ▸ sæt flueben i **"Vis
+tillid til adgang til VBA-projektobjektmodellen"** ▸ **OK** ▸ **OK**.
+(På engelsk: Trust Center ▸ Macro Settings ▸ "Trust access to the VBA
+project object model".) Det er det, der giver en makro lov til at
+importere andre moduler for dig - uden det kan installations-makroen
+ikke køre.
+
+### Trin 2: importér installations-filen og kør den
+
 1. Åbn Excel, opret en ny, tom projektmappe.
 2. Tryk **Alt+F11** for at åbne VBA-editoren.
-3. I **Project Explorer** (panelet til venstre - er det ikke synligt, tryk
-   **Ctrl+R**): du ser projektet **VBAProject (Mappe1)** med en mappe
-   **Microsoft Excel Objects**, der allerede indeholder **ThisWorkbook** og
-   nogle **Sheet**-moduler. Dem skal du ikke røre - undtagen ThisWorkbook,
-   se punkt 5.
-4. Importér de almindelige moduler og klasser:
-   - Højreklik på **VBAProject (Mappe1)** ▸ **Filer** ▸ **Importér fil…**
-   - Vælg **alle** `.bas`-filerne fra `vba`-mappen på én gang
-     (Ctrl+klik for at markere flere), tryk **Åbn**.
-   - Gør det samme for **alle** `.cls`-filerne **undtagen** `ThisWorkbook.cls`
-     (den importeres ikke - se næste punkt).
-5. Sæt kode ind i **ThisWorkbook** (det modul, der allerede findes):
-   - Dobbeltklik på **ThisWorkbook** under **Microsoft Excel Objects** i
-     Project Explorer.
-   - Åbn filen `ThisWorkbook.cls` i en almindelig teksteditor, kopiér
-     **alt indholdet undtagen de første tre linjer** (dem der starter med
-     `Option Explicit` og nedefter - selve NOTE-kommentaren øverst kan du
-     også kopiere med, den gør ingen skade), og indsæt det i det tomme
-     kodevindue for ThisWorkbook.
-6. Tryk **Ctrl+S** for at gemme. Excel spørger, om du vil gemme som
+3. Højreklik på **VBAProject (Mappe1)** i Project Explorer (til venstre -
+   ikke synlig? tryk **Ctrl+R**) ▸ **Filer** ▸ **Importér fil…** ▸ vælg
+   **kun** `_Installer.bas` fra `vba`-mappen ▸ **Åbn**.
+4. Dobbeltklik på det nye modul **modInstaller** i Project Explorer, klik
+   et sted inde i `Public Sub ImportAllModules()`, og tryk **F5** (Kør).
+5. Der åbner en mappevælger - vælg selve `vba`-mappen (den samme, du hentede
+   `_Installer.bas` fra). Den importerer nu de resterende 23 filer og
+   indsætter ThisWorkbook-koden automatisk.
+6. En besked bekræfter, hvor mange filer der blev importeret. Er der noget,
+   der fejlede, står det i beskeden - de kan importeres manuelt bagefter
+   på samme måde som i trin 3.
+
+### Trin 3: gem som tilføjelsesprogram og aktivér
+
+7. Tryk **Ctrl+S** for at gemme. Excel spørger, om du vil gemme som
    makro-aktiveret. Vælg **Filtype: Excel-tilføjelsesprogram (*.xlam)**,
    giv den et navn (fx `BudgetFraCSV.xlam`), og gem den i den mappe, Excel
    selv foreslår (så den automatisk findes igen senere).
-7. Luk projektmappen. I Excel: **Filer ▸ Indstillinger ▸
+8. Luk projektmappen. I Excel: **Filer ▸ Indstillinger ▸
    Tilføjelsesprogrammer ▸ Nederst: "Administrer: Excel-tilføjelsesprogrammer"
    ▸ Kør…** ▸ sæt flueben ud for **BudgetFraCSV** ▸ **OK**.
    (Er den ikke på listen: **Gennemse…** og find den `.xlam`-fil, du gemte
-   i punkt 6.)
-8. Der kommer måske en sikkerhedsadvarsel om makroer - det er forventet,
+   i trin 7.)
+9. Der kommer måske en sikkerhedsadvarsel om makroer - det er forventet,
    siden det er en makro-baseret tilføjelse; vælg at aktivere/tillade den.
-9. Åbn (eller opret) en ny projektmappe. Der skulle nu være et menupunkt
-   **Budget** i topmenuen (under fanen **Tilføjelsesprogrammer**, hvis din
-   Excel viser den fane - ellers direkte i topmenulinjen).
+10. Åbn (eller opret) en ny projektmappe. Der skulle nu være et menupunkt
+    **Budget** i topmenuen (under fanen **Tilføjelsesprogrammer**, hvis din
+    Excel viser den fane - ellers direkte i topmenulinjen).
 
 Hvis menuen ikke dukker op: tryk Alt+F11, find `modMenu` i Project
 Explorer, dobbeltklik, og kør `BuildMenu` manuelt (F5, med markøren inde i
 `Public Sub BuildMenu()`).
+
+### Alternativ: importér alle filer manuelt
+
+Vil du hellere undgå at slå Trust Center-indstillingen til, kan du
+importere filerne én for én i stedet: **Filer ▸ Importér fil…** for hver
+`.bas`- og `.cls`-fil (Ctrl+klik virker som regel til at markere flere ad
+gangen inden for samme mappe, men ikke alle Excel-udgaver understøtter
+det lige godt - importér dem enkeltvis, hvis det driller). **Undtagen**
+`ThisWorkbook.cls` og `_Installer.bas`: dobbeltklik på **ThisWorkbook**
+(findes allerede under Microsoft Excel Objects i Project Explorer), åbn
+`ThisWorkbook.cls` i en teksteditor, kopiér alt indholdet, og indsæt det i
+det tomme kodevindue for ThisWorkbook. `_Installer.bas` skal slet ikke med
+i denne fremgangsmåde. Fortsæt derefter fra trin 7 ovenfor.
 
 ## Sådan bruges den
 
@@ -135,9 +160,15 @@ enhver postering, hvis tekst indeholder et af numrene, automatisk sat til
 
 ## Fejlfinding
 
-- **"Compile error" ved import**: du har sandsynligvis glemt at importere
-  en af filerne, eller ThisWorkbook-koden mangler. Tjek at alle 25 filer i
-  `vba`-mappen er med (24 importeret + ThisWorkbook indsat direkte).
+- **"Compile error" ved import/kørsel**: du har sandsynligvis glemt at
+  importere en af filerne, eller ThisWorkbook-koden mangler. Kør
+  `ImportAllModules` igen (den springer filer, der allerede findes, over
+  med en fejlbesked du kan se) - eller tjek manuelt i Project Explorer at
+  alle 24 moduler/klasser fra `vba`-mappen er der, plus koden i
+  ThisWorkbook.
+- **To ens `Option Explicit`-fejl i ThisWorkbook**: sker kun hvis
+  ThisWorkbook allerede havde en linje `Option Explicit` fra før - slet
+  den ene af de to.
 - **Danske bogstaver (æøå) ser forkerte ud i menuer/beskeder**: det tyder
   på, at en fil er blevet gemt om med et forkert tegnsæt undervejs. Prøv at
   importere filen igen fra den oprindelige udleverede kildefil.
